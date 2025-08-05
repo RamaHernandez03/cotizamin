@@ -1,9 +1,10 @@
-// app/api/auth/[...nextauth]/route.ts
-import NextAuth from "next-auth"
-import CredentialsProvider from "next-auth/providers/credentials"
-import { PrismaAdapter } from "@next-auth/prisma-adapter"
-import prisma from "@/lib/prisma"
-import { compare } from "bcryptjs"
+import NextAuth from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { PrismaAdapter } from "@next-auth/prisma-adapter";
+import prisma from "@/lib/prisma";
+import { compare } from "bcryptjs";
+import { JWT } from "next-auth/jwt";
+import { Session, User } from "next-auth";
 
 const handler = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -12,20 +13,26 @@ const handler = NextAuth({
       name: "credentials",
       credentials: {
         email: { label: "Email", type: "email" },
-        ruc: { label: "RUC", type: "text" },
-        password: { label: "Password", type: "password" },
+        password: { label: "Contraseña", type: "password" },
       },
       async authorize(credentials) {
-        const user = await prisma.user.findUnique({
-          where: { email: credentials?.email || "" },
-        })
+        if (!credentials?.email || !credentials?.password) return null;
 
-        if (!user) return null
+        const user = await prisma.cliente.findUnique({
+          where: { email: credentials.email },
+        });
 
-        const passwordMatch = await compare(credentials!.password, user.password!)
-        if (!passwordMatch) return null
+        if (!user) return null;
 
-        return user
+        const isValid = await compare(credentials.password, user.password);
+        if (!isValid) return null;
+
+        return {
+          id: user.id_cliente,
+          nombre: user.nombre,
+          email: user.email,
+          ruc: user.ruc,
+        };
       },
     }),
   ],
@@ -36,18 +43,26 @@ const handler = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    async jwt({ token, user }) {
-      if (user) token.id = user.id
-      return token
-    },
-    async session({ session, token }) {
-        if (session.user && token) {
-          (session.user as { id: string }).id = token.id as string;
-        }
-        return session;
+    async jwt({ token, user }: { token: JWT; user?: User }) {
+      if (user) {
+        token.id = user.id;
+        token.nombre = user.nombre;
+        token.ruc = user.ruc;
+        token.email = user.email;
       }
+      return token;
+    },
+  
+    async session({ session, token }: { session: Session; token: JWT }) {
+      if (session.user) {
+        session.user.id = token.id as string;
+        session.user.nombre = token.nombre as string;
+        session.user.ruc = token.ruc as string;
+      }
+      return session;
+    },
   },
   secret: process.env.NEXTAUTH_SECRET,
-})
+});
 
-export { handler as GET, handler as POST }
+export { handler as GET, handler as POST };

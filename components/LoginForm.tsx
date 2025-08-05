@@ -1,48 +1,40 @@
-"use client";
+'use client'
 
-import { useState } from "react";
+import { signIn } from 'next-auth/react'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
-export default function AuthForm() {
-  const [form, setForm] = useState({
-    nombre: "",
-    ruc: "",
-    email: "",
-    password: "",
-  });
-
-  const [message, setMessage] = useState("");
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
+export default function LoginForm() {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMessage("");
+    e.preventDefault()
+    setError('')
+    
+    const res = await signIn('credentials', {
+      redirect: false,
+      email,
+      password,
+    })
 
-    const res = await fetch("/api/register", {
-      method: "POST",
-      body: JSON.stringify(form),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      setMessage(data.error || "Error al registrar usuario");
+    if (res?.error) {
+      setError(res.error)
     } else {
-      setMessage("Usuario registrado correctamente");
+      router.push('/dashboard')
     }
-  };
+  }
 
   return (
     <div className="min-h-screen flex" style={{ fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif" }}>
       {/* Left side - Image (3/5) */}
       <div className="w-3/5 relative overflow-hidden">
         <div 
-          className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-900 to-blue-900"
+          className="absolute inset-0 bg-gradient-to-br from-blue-900 via-indigo-900 to-purple-900"
           style={{ 
-            backgroundImage: `linear-gradient(135deg, #00152F 0%, #0f172a 30%, #1e3a8a 70%, #1e40af 100%),
+            backgroundImage: `linear-gradient(135deg, #00152F 0%, #1e3a8a 50%, #3730a3 100%),
                             url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
             backgroundBlendMode: 'overlay'
           }}
@@ -59,7 +51,7 @@ export default function AuthForm() {
                 Cotizamin
               </h1>
               <p className="text-xl opacity-90 leading-relaxed mb-8">
-                Únete a la plataforma más avanzada para gestionar tus cotizaciones y proyectos
+                Inicia sesión para acceder a tu plataforma de gestión de cotizaciones
               </p>
               <div className="flex items-center justify-center space-x-8 text-sm opacity-75">
                 <div className="flex flex-col items-center">
@@ -92,29 +84,28 @@ export default function AuthForm() {
         </div>
       </div>
 
-      {/* Right side - Register Form (2/5) */}
+      {/* Right side - Login Form (2/5) */}
       <div className="w-2/5 flex flex-col" style={{ backgroundColor: '#efefef' }}>
         <div className="flex-1 flex flex-col justify-center p-8">
           <div className="mb-8">
             <h2 className="text-2xl font-bold mb-2" style={{ color: '#00152F' }}>
-              Crear Cuenta
+              Iniciar Sesión
             </h2>
             <p className="text-sm opacity-70" style={{ color: '#00152F' }}>
-              Regístrate en Cotizamin
+              Accede a tu cuenta de Cotizamin
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
-                Nombre
+                Email
               </label>
               <input
-                name="nombre"
-                type="text"
-                value={form.nombre}
-                onChange={handleChange}
-                placeholder="Tu nombre completo"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="tu@email.com"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                 style={{ backgroundColor: 'white', color: '#00152F'}}
                 required
@@ -123,45 +114,12 @@ export default function AuthForm() {
             
             <div>
               <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
-                RUC
-              </label>
-              <input
-                name="ruc"
-                type="text"
-                value={form.ruc}
-                onChange={handleChange}
-                placeholder="12345678901"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                style={{ backgroundColor: 'white', color: '#00152F'}}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
-                Email
-              </label>
-              <input
-                name="email"
-                type="email"
-                value={form.email}
-                onChange={handleChange}
-                placeholder="tu@email.com"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                style={{ backgroundColor: 'white', color: '#00152F'}}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
                 Contraseña
               </label>
               <input
-                name="password"
                 type="password"
-                value={form.password}
-                onChange={handleChange}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                 style={{ backgroundColor: 'white', color: '#00152F'}}
@@ -169,13 +127,9 @@ export default function AuthForm() {
               />
             </div>
 
-            {message && (
-              <div className={`px-4 py-3 rounded-lg text-sm ${
-                message.includes('correctamente')
-                  ? 'bg-green-50 border border-green-200 text-green-700'
-                  : 'bg-red-50 border border-red-200 text-red-700'
-              }`}>
-                {message}
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                {error}
               </div>
             )}
 
@@ -184,7 +138,7 @@ export default function AuthForm() {
               className="w-full py-3 px-4 rounded-lg text-white font-medium transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
               style={{ backgroundColor: '#00152F' }}
             >
-              Crear Cuenta
+              Ingresar
             </button>
           </form>
 
@@ -197,5 +151,5 @@ export default function AuthForm() {
         </div>
       </div>
     </div>
-  );
+  )
 }

@@ -1,19 +1,32 @@
 // app/api/register/route.ts
-import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
 import { hash } from 'bcryptjs'
+import { NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
 
 export async function POST(req: Request) {
-  const { email, password, ruc, name } = await req.json()
+  const { nombre, ruc, email, password } = await req.json()
 
-  const existing = await prisma.user.findUnique({ where: { email } })
-  if (existing) return NextResponse.json({ error: 'Usuario ya existe' }, { status: 400 })
+  if (!email || !password || !nombre || !ruc) {
+    return NextResponse.json({ error: 'Faltan campos' }, { status: 400 })
+  }
 
-  const hashed = await hash(password, 10)
+  const clienteExistente = await prisma.cliente.findUnique({ where: { email } })
+  if (clienteExistente) {
+    return NextResponse.json({ error: 'El email ya está registrado' }, { status: 400 })
+  }
 
-  const user = await prisma.user.create({
-    data: { email, password: hashed, ruc, name },
+  const hashedPassword = await hash(password, 10)
+
+  const nuevoCliente = await prisma.cliente.create({
+    data: {
+      id_cliente: crypto.randomUUID(),
+      nombre,
+      ruc,
+      email,
+      password: hashedPassword,
+      fecha_registro: new Date(),
+    }
   })
 
-  return NextResponse.json({ user })
+  return NextResponse.json({ success: true, cliente: nuevoCliente })
 }

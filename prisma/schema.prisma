@@ -17,7 +17,8 @@ model Cliente {
   id_cliente      String    @id
   nombre          String
   ruc             String    @unique
-  email           String
+  email           String    @unique  // 👈 hace falta esto
+  password        String             // 👈 nuevo campo para login
   fecha_registro  DateTime
   productos       Producto[]
 }
