@@ -1,7 +1,7 @@
 // app/api/register/route.ts
 import { NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { hash } from 'bcrypt'
+import { hash } from 'bcryptjs'
 
 export async function POST(req: Request) {
   const { email, password, ruc, name } = await req.json()

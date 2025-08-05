@@ -3,7 +3,7 @@ import NextAuth from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 import { PrismaAdapter } from "@next-auth/prisma-adapter"
 import prisma from "@/lib/prisma"
-import { compare } from "bcrypt"
+import { compare } from "bcryptjs"
 
 const handler = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -41,9 +41,11 @@ const handler = NextAuth({
       return token
     },
     async session({ session, token }) {
-      if (token) session.user.id = token.id as string
-      return session
-    },
+        if (session.user && token) {
+          (session.user as { id: string }).id = token.id as string;
+        }
+        return session;
+      }
   },
   secret: process.env.NEXTAUTH_SECRET,
 })
