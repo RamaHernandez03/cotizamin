@@ -186,11 +186,15 @@ export default function AuthForm() {
             >
               Crear Cuenta
             </button>
+
+            <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
+                ¿Ya tenes una cuenta?   <a href='http://localhost:3000/login' className='text-blue-700 hover:text-blue-500'>Inicia Sesion</a>
+              </label>
           </form>
 
           {/* Footer */}
           <div className="mt-8 text-center">
-            <p className="text-xs opacity-60" style={{ color: '#00152F' }}>
+            <p className="text-sm opacity-60" style={{ color: '#00152F' }}>
               © 2025 Cotizamin. Todos los derechos reservados.
             </p>
           </div>

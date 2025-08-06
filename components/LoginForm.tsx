@@ -140,11 +140,17 @@ export default function LoginForm() {
             >
               Ingresar
             </button>
+
+            <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
+                ¿Aun no estas Registrado?   <a href='http://localhost:3000/register' className='text-blue-700 hover:text-blue-500'>Registrate aqui</a>
+              </label>
+
+
           </form>
 
           {/* Footer */}
           <div className="mt-8 text-center">
-            <p className="text-xs opacity-60" style={{ color: '#00152F' }}>
+            <p className="text-sm opacity-60" style={{ color: '#00152F' }}>
               © 2025 Cotizamin. Todos los derechos reservados.
             </p>
           </div>
