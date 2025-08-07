@@ -20,6 +20,14 @@ model Cliente {
   email           String    @unique  // 👈 hace falta esto
   password        String             // 👈 nuevo campo para login
   fecha_registro  DateTime
+
+    // Nuevos campos
+  telefono        String?    // con `?` es opcional
+  direccion       String?
+  pais            String?
+  email_contacto  String?
+  certificaciones String?
+  
   productos       Producto[]
 }
 
