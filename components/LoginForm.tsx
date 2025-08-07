@@ -51,7 +51,7 @@ export default function LoginForm() {
                 Cotizamin
               </h1>
               <p className="text-xl opacity-90 leading-relaxed mb-8">
-                Inicia sesión para acceder a tu plataforma de gestión de cotizaciones
+                Inicia sesión en tu gestor de productos de confianza
               </p>
               <div className="flex items-center justify-center space-x-8 text-sm opacity-75">
                 <div className="flex flex-col items-center">

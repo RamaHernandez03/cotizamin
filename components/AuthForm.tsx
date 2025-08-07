@@ -59,7 +59,7 @@ export default function AuthForm() {
                 Cotizamin
               </h1>
               <p className="text-xl opacity-90 leading-relaxed mb-8">
-                Únete a la plataforma más avanzada para gestionar tus cotizaciones y proyectos
+                Únete a la plataforma más avanzada para gestionar tus cotizaciones y productos
               </p>
               <div className="flex items-center justify-center space-x-8 text-sm opacity-75">
                 <div className="flex flex-col items-center">

@@ -24,12 +24,25 @@ model Cliente {
 }
 
 model Producto {
-  id_producto         String   @id
-  nombre              String
-  proveedor           Cliente  @relation(fields: [proveedor_id], references: [id_cliente], onDelete: Cascade)
-  proveedor_id        String
-  precio_actual       Float
-  stock_actual        Int
-  estado              String
-  fecha_actualizacion DateTime
+  id_producto          String   @id @default(uuid())
+  codigo_interno       String
+  descripcion          String
+  marca                String
+  modelo               String
+  material             String
+  norma_tecnica        String
+  unidad               String
+  stock_actual         Int
+  precio_actual        Float
+  moneda               String
+  tiempo_entrega       String
+  ubicacion_stock      String
+  estado               String
+  fecha_actualizacion  DateTime
+
+  proveedor            Cliente  @relation(fields: [proveedor_id], references: [id_cliente], onDelete: Cascade)
+  proveedor_id         String
+
+  @@unique([codigo_interno, proveedor_id], name: "codigo_interno_proveedor_id")
 }
+
