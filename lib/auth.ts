@@ -33,20 +33,15 @@ export const authOptions: NextAuthOptions = {
           nombre: user.nombre,
           email: user.email,
           ruc: user.ruc,
+          telefono: user.telefono || null, // 👈 agregado
         };
       },
     }),
   ],
   session: {
     strategy: "jwt",
-    // Duración de la sesión en segundos
-    maxAge: 30 * 60, // 30 minutos (30 * 60 segundos)
-    // maxAge: 60 * 60, // 1 hora
-    // maxAge: 24 * 60 * 60, // 24 horas
-    // maxAge: 7 * 24 * 60 * 60, // 7 días
-    
-    // Actualizar la sesión cada vez que se use (opcional)
-    updateAge: 5 * 60, // Actualizar cada 5 minutos si la sesión está activa
+    maxAge: 30 * 60, // 30 minutos
+    updateAge: 5 * 60, // Actualizar cada 5 minutos
   },
   pages: {
     signIn: "/login",
@@ -58,6 +53,7 @@ export const authOptions: NextAuthOptions = {
         token.nombre = user.nombre;
         token.ruc = user.ruc;
         token.email = user.email;
+        token.telefono = (user as any).telefono || null; // 👈 agregado
       }
       return token;
     },
@@ -66,6 +62,7 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.id as string;
         session.user.nombre = token.nombre as string;
         session.user.ruc = token.ruc as string;
+        session.user.telefono = token.telefono as string | null; // 👈 agregado
       }
       return session;
     },

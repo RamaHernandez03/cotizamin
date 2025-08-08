@@ -1,14 +1,16 @@
+// lib/actions.ts
 'use server';
 
 import { prisma } from './prisma';
 
+
 export async function updateUserProfile(
     id_cliente: string,
-    data: { nombre: string; apellido: string; telefono: string; ruc: string }
+    data: { nombre: string; telefono: string; ruc: string }
   ) {
     try {
       const updatedUser = await prisma.cliente.update({
-        where: { id_cliente }, // corregir aquí
+        where: { id_cliente },
         data,
       });
       return updatedUser;
@@ -17,3 +19,4 @@ export async function updateUserProfile(
       throw error;
     }
   }
+  

@@ -11,7 +11,6 @@ export default function EditProfilePage() {
 
   const [formData, setFormData] = useState({
     nombre: '',
-    apellido: '',
     telefono: '',
     email: '',
     ruc: '',
@@ -22,7 +21,6 @@ export default function EditProfilePage() {
       const { nombre, apellido, telefono, email, ruc } = session.user as any;
       setFormData({
         nombre: nombre || '',
-        apellido: apellido || '',
         telefono: telefono || '',
         email: email || '',
         ruc: ruc || '',
@@ -45,7 +43,6 @@ export default function EditProfilePage() {
 
     await updateUserProfile(session.user.id, {
       nombre: formData.nombre,
-      apellido: formData.apellido,
       telefono: formData.telefono,
       ruc: formData.ruc,
     });
@@ -54,61 +51,56 @@ export default function EditProfilePage() {
 
   return (
     <div className="max-w-xl mx-auto mt-10 p-6 bg-white rounded-lg shadow">
-      <h1 className="text-2xl font-semibold mb-6">Editar Perfil</h1>
+      <h1 className="text-2xl font-semibold mb-6" style={{color: '#00152F'}}>Editar Perfil</h1>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block mb-1 font-medium">Nombre</label>
+          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>Nombre</label>
           <input
             type="text"
             name="nombre"
             value={formData.nombre}
             onChange={handleChange}
+            style={{color: '#00152F'}}
             className="w-full border rounded px-3 py-2"
           />
         </div>
         <div>
-          <label className="block mb-1 font-medium">Apellido</label>
-          <input
-            type="text"
-            name="apellido"
-            value={formData.apellido}
-            onChange={handleChange}
-            className="w-full border rounded px-3 py-2"
-          />
-        </div>
-        <div>
-          <label className="block mb-1 font-medium">Teléfono</label>
+          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>Teléfono</label>
           <input
             type="text"
             name="telefono"
             value={formData.telefono}
             onChange={handleChange}
+            style={{color: '#00152F'}}
             className="w-full border rounded px-3 py-2"
           />
         </div>
         <div>
-          <label className="block mb-1 font-medium">Email</label>
+          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>Email</label>
           <input
             type="email"
             name="email"
             value={formData.email}
+            style={{color: '#00152F'}}
             disabled
             className="w-full bg-gray-100 border rounded px-3 py-2"
           />
         </div>
         <div>
-          <label className="block mb-1 font-medium">RUC</label>
+          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>RUC</label>
           <input
             type="text"
             name="ruc"
             value={formData.ruc}
             onChange={handleChange}
+            style={{color: '#00152F'}}
             className="w-full border rounded px-3 py-2"
           />
         </div>
         <button
           type="submit"
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          style={{background: '#00152F'}}
+          className="text-white px-4 py-2 mt-4 rounded hover:bg-blue-700"
         >
           Guardar Cambios
         </button>

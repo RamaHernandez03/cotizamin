@@ -20,10 +20,10 @@ export default function ProfileCard() {
 
   return (
     <div className="bg-white shadow p-6 rounded-xl w-full max-w-3xl mx-auto">
-      <h2 className="text-xl font-bold text-yellow-600 mb-4">ACTIVIDAD RECIENTE :</h2>
+      <h2 className="text-xl font-bold mb-4" style={{color: '#FFBD00'}}>ACTIVIDAD RECIENTE :</h2>
 
       <div className="flex justify-between">
-        <div className="flex flex-col space-y-2 text-lg">
+        <div className="flex flex-col space-y-2 text-lg" style={{color: '#00152F'}}>
           <div><strong>Nombre / Razón Social:</strong> {cliente.nombre}</div>
           <div><strong>RUC / Nº Documento:</strong> {cliente.ruc}</div>
           <div><strong>Correo Electrónico De Contacto:</strong> {cliente.email_contacto || cliente.email}</div>
@@ -39,7 +39,7 @@ export default function ProfileCard() {
 
       <div className="mt-6 text-right">
         <a href="/dashboard/profile/edit">
-          <button className="bg-[#001d3d] text-yellow-400 px-6 py-2 rounded-full hover:bg-[#003566]">
+          <button className="bg-[#001d3d] px-6 py-2 rounded-full hover:bg-[#003566]" style={{color: '#FFBD00'}}>
             EDITAR PERFIL
           </button>
         </a>
