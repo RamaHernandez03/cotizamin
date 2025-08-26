@@ -26,12 +26,8 @@ export default function ProfileCard() {
         <div className="flex flex-col space-y-2 text-lg" style={{color: '#00152F'}}>
           <div><strong>Nombre / Razón Social:</strong> {cliente.nombre}</div>
           <div><strong>RUC / Nº Documento:</strong> {cliente.ruc}</div>
-          <div><strong>Correo Electrónico De Contacto:</strong> {cliente.email_contacto || cliente.email}</div>
-          <div><strong>Correo Electrónico De Inicio:</strong> {cliente.email}</div>
+          <div><strong>Correo Electrónico:</strong> {cliente.email}</div>
           <div><strong>Teléfono De Contacto:</strong> {cliente.telefono || '—'}</div>
-          <div><strong>Dirección / Sede:</strong> {cliente.direccion || '—'}</div>
-          <div><strong>País:</strong> {cliente.pais || '—'}</div>
-          <div><strong>Certificaciones:</strong> {cliente.certificaciones || '—'}</div>
         </div>
 
         <img src="/avatar-placeholder.png" alt="Avatar" className="w-24 h-24 rounded-full" />

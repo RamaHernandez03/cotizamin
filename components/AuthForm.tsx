@@ -1,20 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 
 export default function AuthForm() {
-  const [form, setForm] = useState({
-    nombre: "",
-    ruc: "",
-    email: "",
-    password: "",
-  });
-
+  const router = useRouter();
+  const [form, setForm] = useState({ nombre:"", ruc:"", email:"", password:"" });
   const [message, setMessage] = useState("");
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm({ ...form, [e.target.name]: e.target.value });
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,9 +26,24 @@ export default function AuthForm() {
 
     if (!res.ok) {
       setMessage(data.error || "Error al registrar usuario");
-    } else {
-      setMessage("Usuario registrado correctamente");
+      return;
     }
+
+    // Auto-login con NextAuth
+    const result = await signIn("credentials", {
+      email: form.email,
+      password: form.password,
+      redirect: false,           // importante para manejar el push manual
+    });
+
+    if (result?.error) {
+      setMessage(result.error || "Error al iniciar sesión");
+      return;
+    }
+
+    // Sesión creada: a home
+    router.push("/dashboard/home");
+  
   };
 
   return (
