@@ -33,15 +33,15 @@ export const authOptions: NextAuthOptions = {
           nombre: user.nombre,
           email: user.email,
           ruc: user.ruc,
-          telefono: user.telefono || null, // 👈 agregado
+          telefono: user.telefono || null,
         };
       },
     }),
   ],
   session: {
     strategy: "jwt",
-    maxAge: 30 * 60, // 30 minutos
-    updateAge: 5 * 60, // Actualizar cada 5 minutos
+    maxAge: 30 * 60,
+    updateAge: 5 * 60,
   },
   pages: {
     signIn: "/login",

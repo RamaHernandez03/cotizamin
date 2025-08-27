@@ -54,3 +54,30 @@ model Producto {
   @@unique([codigo_interno, proveedor_id], name: "codigo_interno_proveedor_id")
 }
 
+// prisma/schema.prisma
+model RecommendationBatch {
+  id              String               @id @default(cuid())
+  cliente_id      String
+  fecha_analisis  DateTime?
+  nota_general    String?
+  total           Int                  @default(0)
+  createdAt       DateTime             @default(now())
+  items           RecommendationItem[]
+
+  @@index([cliente_id, createdAt])
+}
+
+model RecommendationItem {
+  id        String   @id @default(cuid())
+  batchId   String
+  tipo      String   // "precio" | "stock" | "perfil"
+  mensaje   String
+  producto  String?  // null o texto
+  prioridad String   // "alta" | "media" | "baja"
+
+  batch     RecommendationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+}
+
+

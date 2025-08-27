@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
+import RefreshRecosButton from "@/components/RefreshRecosButton";
 
 type Prioridad = "alta" | "media" | "baja";
 type Tipo = "precio" | "stock" | "perfil";
@@ -55,28 +56,18 @@ function TipoIcon({ tipo }: { tipo: Tipo }) {
   return <span className="mr-2">{map[tipo] ?? "🔔"}</span>;
 }
 
-
-async function fetchRecos(clienteId: string): Promise<RecoResponse> {
+async function getBase() {
     const h = await headers();
     const proto = h.get("x-forwarded-proto") ?? "http";
     const host = h.get("x-forwarded-host") ?? h.get("host")!;
-    const origin = `${proto}://${host}`;
-  
-    const res = await fetch(`${origin}/api/recommendations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cliente_id: clienteId }),
-      cache: "no-store",
-    });
-  
+    return `${proto}://${host}`;
+  }
+
+async function fetchRecos(clienteId: string): Promise<RecoResponse> {
+    const base = await getBase();
+    const res = await fetch(`${base}/api/recommendations?cliente_id=${clienteId}`, { cache: "no-store" });
     if (!res.ok) {
-      return {
-        ok: false,
-        cliente_id: clienteId,
-        fecha_analisis: null,
-        total_recomendaciones: 0,
-        recomendaciones: [],
-      };
+      return { ok: false, cliente_id: clienteId, fecha_analisis: null, total_recomendaciones: 0, recomendaciones: [] };
     }
     return res.json();
   }
@@ -102,34 +93,35 @@ export default async function NotificationsPage() {
   return (
     <div className="space-y-8">
       {/* Título */}
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-wide">NOTIFICACIONES</h1>
-      </header>
+        <header className="flex items-center justify-between">
+            <h1 className="text-2xl text-gray-900 font-semibold tracking-wide">NOTIFICACIONES</h1>
+            <RefreshRecosButton clienteId={String(clienteId)} />
+        </header>
 
       {/* Actividad Reciente */}
       <section className="bg-white border rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-gray-600 mb-4">ACTIVIDAD RECIENTE :</h2>
+        <h2 className="text-sm font-semibold text-gray-900 mb-4">ACTIVIDAD RECIENTE :</h2>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-stretch">
           {/* Bloque de resumen */}
           <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="rounded-lg border p-4">
-              <p className="text-xs text-gray-500">Último Análisis</p>
-              <p className="text-base font-medium">{fmtFechaISO(data.fecha_analisis)}</p>
+              <p className="text-xs text-gray-900 font-semibold">Último Análisis</p>
+              <p className="text-base font-medium text-gray-800">{fmtFechaISO(data.fecha_analisis)}</p>
             </div>
             <div className="rounded-lg border p-4">
-              <p className="text-xs text-gray-500">Total Recomendaciones</p>
-              <p className="text-base font-medium">{data.total_recomendaciones ?? recos.length}</p>
+              <p className="text-xs text-gray-900 font-semibold">Total Recomendaciones</p>
+              <p className="text-base font-medium text-gray-800">{data.total_recomendaciones ?? recos.length}</p>
             </div>
             <div className="rounded-lg border p-4">
-              <p className="text-xs text-gray-500">Prioridades</p>
+              <p className="text-xs text-gray-900 font-semibold">Prioridades</p>
               <p className="text-sm mt-1 flex gap-2 items-center">
-                <span className="inline-flex items-center gap-1">
+                <span className="inline-flex text-gray-800 items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-red-500 inline-block" /> {countAlta}
                 </span>
-                <span className="inline-flex items-center gap-1">
+                <span className="inline-flex text-gray-800 items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" /> {countMedia}
                 </span>
-                <span className="inline-flex items-center gap-1">
+                <span className="inline-flex text-gray-800 items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> {countBaja}
                 </span>
               </p>
@@ -138,8 +130,8 @@ export default async function NotificationsPage() {
 
           {/* Nota general / imagen lateral */}
           <div className="rounded-lg border p-4 bg-gray-50">
-            <p className="text-xs text-gray-500 mb-1">Resumen</p>
-            <p className="text-sm">
+            <p className="text-xs text-gray-900 font-semibold mb-1">Resumen</p>
+            <p className="text-sm text-gray-800">
               {data?.resumen?.nota_general ??
                 "La IA generará recomendaciones para optimizar tu competitividad y catálogo."}
             </p>
@@ -149,15 +141,15 @@ export default async function NotificationsPage() {
 
       {/* Historial de Notificaciones */}
       <section className="bg-white border rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-gray-600 mb-4">HISTORIAL DE NOTIFICACIONES</h2>
+        <h2 className="text-sm font-semibold text-gray-900 mb-4">HISTORIAL DE NOTIFICACIONES</h2>
 
         {recos.length === 0 ? (
-          <div className="text-sm text-gray-500">Aún no hay notificaciones.</div>
+          <div className="text-sm text-gray-900">Aún no hay notificaciones.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="text-left text-gray-500">
+                <tr className="text-left text-gray-900">
                   <th className="py-2 pr-4">Tipo</th>
                   <th className="py-2 pr-4">Detalle</th>
                   <th className="py-2 pr-4">Producto</th>
@@ -167,15 +159,15 @@ export default async function NotificationsPage() {
               <tbody>
                 {recos.map((r, i) => (
                   <tr key={i} className="border-t">
-                    <td className="py-3 pr-4">
+                    <td className="py-3 pr-4 font-semibold text-gray-800">
                       <div className="inline-flex items-center">
                         <TipoIcon tipo={r.tipo} />
                         <span className="capitalize">{r.tipo}</span>
                       </div>
                     </td>
-                    <td className="py-3 pr-4">{r.mensaje}</td>
-                    <td className="py-3 pr-4">{r.producto ?? "—"}</td>
-                    <td className="py-3 pr-4">
+                    <td className="py-3 pr-4 text-gray-800">{r.mensaje}</td>
+                    <td className="py-3 pr-4 text-gray-800">{r.producto ?? "—"}</td>
+                    <td className="py-3 pr-4 text-gray-800">
                       <PriorityBadge p={r.prioridad} />
                     </td>
                   </tr>
