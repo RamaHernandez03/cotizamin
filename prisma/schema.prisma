@@ -1,8 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// prisma/schema.prisma
 
 generator client {
   provider = "prisma-client-js"
@@ -14,56 +10,64 @@ datasource db {
 }
 
 model Cliente {
-  id_cliente      String    @id
+  id_cliente      String   @id            // si querés UUID automático: @default(uuid())
   nombre          String
-  ruc             String    @unique
-  email           String    @unique  // 👈 hace falta esto
-  password        String             // 👈 nuevo campo para login
+  ruc             String   @unique
+  email           String   @unique        // requerido para login
+  password        String
   fecha_registro  DateTime
 
-    // Nuevos campos
-  telefono        String?    // con `?` es opcional
+  // Opcionales
+  telefono        String?
   direccion       String?
   pais            String?
   email_contacto  String?
   certificaciones String?
-  
+
+  // Relación 1:N con Producto (backrelation)
   productos       Producto[]
+
+  // (Opcional) relación con lotes de recomendaciones
+  // batches         RecommendationBatch[]
 }
 
 model Producto {
   id_producto          String   @id @default(uuid())
-  codigo_interno       String
-  descripcion          String
-  marca                String
-  modelo               String
-  material             String
-  norma_tecnica        String
-  unidad               String
-  stock_actual         Int
-  precio_actual        Float
-  moneda               String
-  tiempo_entrega       String
-  ubicacion_stock      String
-  estado               String
-  fecha_actualizacion  DateTime
-
-  proveedor            Cliente  @relation(fields: [proveedor_id], references: [id_cliente], onDelete: Cascade)
   proveedor_id         String
 
+  // Contraparte de la relación con Cliente
+  cliente              Cliente  @relation(fields: [proveedor_id], references: [id_cliente], onDelete: Restrict, onUpdate: Cascade)
+
+  codigo_interno       String
+  descripcion          String
+  marca                String?
+  modelo               String?
+  material             String?
+  norma_tecnica        String?
+  unidad               String?
+  stock_actual         Int      @default(0)
+  precio_actual        Float    @default(0)
+  moneda               String   @default("USD")
+  tiempo_entrega       String?  // string, no int
+  ubicacion_stock      String?
+  estado               String   @default("Activo")
+  fecha_actualizacion  DateTime @default(now())
+
   @@unique([codigo_interno, proveedor_id], name: "codigo_interno_proveedor_id")
+  @@index([proveedor_id, fecha_actualizacion], name: "idx_proveedor_fecha")
 }
 
-// prisma/schema.prisma
 model RecommendationBatch {
-  id              String               @id @default(cuid())
-  cliente_id      String
-  fecha_analisis  DateTime?
-  nota_general    String?
-  total           Int                  @default(0)
-  createdAt       DateTime             @default(now())
-  items           RecommendationItem[]
+  id             String               @id @default(cuid())
+  cliente_id     String
+  fecha_analisis DateTime?
+  nota_general   String?
+  total          Int                  @default(0)
+  createdAt      DateTime             @default(now())
+  items          RecommendationItem[]
 
+  // (Opcional) si querés FK a Cliente, descomentá estas 2 líneas y la backrelation en Cliente
+  // cliente       Cliente  @relation(fields: [cliente_id], references: [id_cliente], onDelete: Restrict)
   @@index([cliente_id, createdAt])
 }
 
@@ -79,5 +83,3 @@ model RecommendationItem {
 
   @@index([batchId])
 }
-
-
