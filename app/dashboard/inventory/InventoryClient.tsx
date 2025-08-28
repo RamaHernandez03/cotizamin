@@ -74,6 +74,13 @@ function InventoryView({ take }: { take: number }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
 
+  // Seteo amigable para móviles en el primer render del cliente
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 640) {
+      setItemsPerPage(25);
+    }
+  }, []);
+
   // Edición
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingData, setEditingData] = useState<Partial<Producto>>({});
@@ -229,17 +236,17 @@ function InventoryView({ take }: { take: number }) {
   };
 
   return (
-    <div className="p-6" style={{ minHeight: "100vh" }}>
-      <h1 className="text-3xl font-bold mb-6" style={{ color: "#00152F" }}>
+    <div className="p-4 sm:p-6" style={{ minHeight: "100vh" }}>
+      <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6" style={{ color: "#00152F" }}>
         Inventario
       </h1>
 
       {/* Controles de carga */}
       <div className="mb-6 space-y-4">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
           <button
             onClick={downloadPlantilla}
-            className="text-white px-6 py-3 rounded-lg transition-all duration-200 font-semibold hover:opacity-90 shadow-md"
+            className="w-full sm:w-auto text-white px-5 py-3 rounded-lg transition-all duration-200 font-semibold hover:opacity-90 shadow-md"
             style={{ backgroundColor: "#00152F" }}
           >
             📥 Descargar plantilla Excel
@@ -249,21 +256,20 @@ function InventoryView({ take }: { take: number }) {
             type="file"
             accept=".xlsx,.xls"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
-            className="border-2 rounded-lg px-4 py-3 bg-white shadow-sm"
+            className="w-full sm:w-auto border-2 rounded-lg px-4 py-3 bg-white shadow-sm"
             style={{ borderColor: "#00152F", color: "#00152F" }}
           />
 
           <button
             onClick={uploadFile}
             disabled={!file || loading}
-            className={`px-6 py-3 rounded-lg transition-all duration-200 font-semibold shadow-md ${
+            className={`w-full sm:w-auto px-6 py-3 rounded-lg transition-all duration-200 font-semibold shadow-md ${
               !file || loading ? "opacity-50 cursor-not-allowed" : "hover:opacity-90"
             } text-black`}
             style={{ backgroundColor: !file || loading ? "#ccc" : "#FFBD00" }}
           >
             {loading ? "⏳ Subiendo..." : "📤 Subir Excel"}
           </button>
-
         </div>
 
         {/* Mensajes */}
@@ -301,21 +307,21 @@ function InventoryView({ take }: { take: number }) {
       </div>
 
       {/* Filtros */}
-      <div className="mb-6 space-y-4">
-        <div className="flex flex-wrap items-center gap-4">
+      <div className="mb-6 space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <input
             type="text"
             placeholder="Buscar por código, descripción o marca..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="border-2 rounded-lg px-4 py-3 min-w-64 bg-white shadow-sm focus:outline-none focus:ring-2"
+            className="border-2 rounded-lg px-4 py-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2"
             style={{ borderColor: "#00152F", color: "#00152F", ["--tw-ring-color" as any]: "#FFBD00" }}
           />
 
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="border-2 rounded-lg px-4 py-3 bg-white shadow-sm focus:outline-none focus:ring-2"
+            className="border-2 rounded-lg px-4 py-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2"
             style={{ borderColor: "#00152F", color: "#00152F", ["--tw-ring-color" as any]: "#FFBD00" }}
           >
             <option value="all">Todos los estados</option>
@@ -326,7 +332,7 @@ function InventoryView({ take }: { take: number }) {
           <select
             value={stockFilter}
             onChange={(e) => setStockFilter(e.target.value)}
-            className="border-2 rounded-lg px-4 py-3 bg-white shadow-sm focus:outline-none focus:ring-2"
+            className="border-2 rounded-lg px-4 py-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2"
             style={{ borderColor: "#00152F", color: "#00152F", ["--tw-ring-color" as any]: "#FFBD00" }}
           >
             <option value="all">Todo el stock</option>
@@ -338,7 +344,7 @@ function InventoryView({ take }: { take: number }) {
           <select
             value={itemsPerPage}
             onChange={(e) => setItemsPerPage(Number(e.target.value))}
-            className="border-2 rounded-lg px-4 py-3 bg-white shadow-sm focus:outline-none focus:ring-2"
+            className="border-2 rounded-lg px-4 py-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2"
             style={{ borderColor: "#00152F", color: "#00152F", ["--tw-ring-color" as any]: "#FFBD00" }}
           >
             <option value={25}>25 por página</option>
@@ -350,25 +356,25 @@ function InventoryView({ take }: { take: number }) {
       </div>
 
       {/* Estadísticas (sobre items cargados) */}
-      <div className="mb-6 flex flex-wrap gap-4">
+      <div className="mb-6 flex flex-col sm:flex-row sm:flex-wrap gap-3">
         <div className="p-4 rounded-lg shadow-md text-white" style={{ backgroundColor: "#00152F" }}>
-          <span className="font-semibold text-lg">Total (cargados): {items.length}</span>
+          <span className="font-semibold text-base sm:text-lg">Total (cargados): {items.length}</span>
         </div>
         <div className="p-4 rounded-lg shadow-md" style={{ backgroundColor: "#FFBD00", color: "#00152F" }}>
-          <span className="font-semibold text-lg">Filtrados: {filteredProductos.length}</span>
+          <span className="font-semibold text-base sm:text-lg">Filtrados: {filteredProductos.length}</span>
         </div>
         <div className="bg-green-50 p-4 rounded-lg shadow-md border-2 border-green-200">
-          <span className="font-semibold text-lg text-green-800">
+          <span className="font-semibold text-base sm:text-lg text-green-800">
             Con stock: {items.filter((p) => p.stock_actual > 0).length}
           </span>
         </div>
         <div className="bg-orange-50 p-4 rounded-lg shadow-md border-2 border-orange-200">
-          <span className="font-semibold text-lg text-orange-800">
+          <span className="font-semibold text-base sm:text-lg text-orange-800">
             Stock bajo: {items.filter((p) => p.stock_actual > 0 && p.stock_actual < 10).length}
           </span>
         </div>
         <div className="bg-red-50 p-4 rounded-lg shadow-md border-2 border-red-200">
-          <span className="font-semibold text-lg text-red-800">
+          <span className="font-semibold text-base sm:text-lg text-red-800">
             Sin stock: {items.filter((p) => p.stock_actual === 0).length}
           </span>
         </div>
@@ -379,7 +385,7 @@ function InventoryView({ take }: { take: number }) {
         <div className="mb-4">
           <button
             onClick={() => setSize(size + 1)}
-            className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
+            className="w-full sm:w-auto px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
           >
             Cargar más del servidor {isValidating ? "…" : ""}
           </button>
@@ -388,27 +394,27 @@ function InventoryView({ take }: { take: number }) {
 
       {/* Paginación superior local */}
       {totalPages > 1 && (
-        <div className="mb-6 flex items-center justify-between p-4 bg-white rounded-lg shadow-md">
-          <div className="text-sm font-medium" style={{ color: "#00152F" }}>
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-white rounded-lg shadow-md">
+          <div className="text-xs sm:text-sm font-medium" style={{ color: "#00152F" }}>
             Mostrando {startIndex + 1} a {Math.min(startIndex + itemsPerPage, filteredProductos.length)} de{" "}
             {filteredProductos.length} productos
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
-              className="px-4 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
+              className="w-full sm:w-auto px-4 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
               style={{ backgroundColor: currentPage === 1 ? "#ccc" : "#00152F" }}
             >
               ← Anterior
             </button>
-            <span className="text-sm font-medium" style={{ color: "#00152F" }}>
+            <span className="text-xs sm:text-sm font-medium" style={{ color: "#00152F" }}>
               Página {currentPage} de {totalPages}
             </span>
             <button
               onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
-              className="px-4 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
+              className="w-full sm:w-auto px-4 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
               style={{ backgroundColor: currentPage === totalPages ? "#ccc" : "#00152F" }}
             >
               Siguiente →
@@ -419,25 +425,25 @@ function InventoryView({ take }: { take: number }) {
 
       {/* Tabla */}
       <div className="overflow-x-auto bg-white rounded-lg shadow-lg">
-        <table className="min-w-full table-auto">
+        <table className="min-w-full table-auto text-xs sm:text-sm">
           <thead className="text-white sticky top-0" style={{ backgroundColor: "#00152F" }}>
             <tr>
-              <th className="px-4 py-4 text-left font-semibold">Código</th>
-              <th className="px-4 py-4 text-left font-semibold">Descripción</th>
-              <th className="px-4 py-4 text-left font-semibold">Marca</th>
-              <th className="px-4 py-4 text-left font-semibold">Modelo</th>
-              <th className="px-4 py-4 text-right font-semibold">Stock</th>
-              <th className="px-4 py-4 text-right font-semibold">Precio (USD)</th>
-              <th className="px-4 py-4 text-left font-semibold">Ubicación</th>
-              <th className="px-4 py-4 text-center font-semibold">Estado</th>
-              <th className="px-4 py-4 text-center font-semibold">Acciones</th>
+              <th className="px-3 sm:px-4 py-3 text-left font-semibold">Código</th>
+              <th className="px-3 sm:px-4 py-3 text-left font-semibold">Descripción</th>
+              <th className="px-3 sm:px-4 py-3 text-left font-semibold hidden md:table-cell">Marca</th>
+              <th className="px-3 sm:px-4 py-3 text-left font-semibold hidden lg:table-cell">Modelo</th>
+              <th className="px-3 sm:px-4 py-3 text-right font-semibold">Stock</th>
+              <th className="px-3 sm:px-4 py-3 text-right font-semibold">Precio (USD)</th>
+              <th className="px-3 sm:px-4 py-3 text-left font-semibold hidden xl:table-cell">Ubicación</th>
+              <th className="px-3 sm:px-4 py-3 text-center font-semibold hidden md:table-cell">Estado</th>
+              <th className="px-3 sm:px-4 py-3 text-center font-semibold">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {currentProducts.length === 0 ? (
               <tr>
                 <td colSpan={9} className="px-6 py-12 text-center" style={{ color: "#00152F" }}>
-                  <div className="text-lg font-medium">
+                  <div className="text-base sm:text-lg font-medium">
                     {items.length === 0
                       ? "No hay productos cargados. Descarga la plantilla y sube tu primer archivo Excel."
                       : "No se encontraron productos con los filtros aplicados."}
@@ -448,15 +454,15 @@ function InventoryView({ take }: { take: number }) {
               currentProducts.map((prod, index) => (
                 <tr
                   key={prod.id_producto}
-                  className={`text-sm transition-colors duration-150 border-b border-gray-100 ${
+                  className={`transition-colors duration-150 border-b border-gray-100 ${
                     index % 2 === 0 ? "bg-white" : "bg-gray-50"
                   } hover:bg-gray-100`}
                 >
-                  <td className="px-4 py-3 font-mono font-medium" style={{ color: "#00152F" }}>
+                  <td className="px-3 sm:px-4 py-3 font-mono font-medium" style={{ color: "#00152F" }}>
                     {prod.codigo_interno}
                   </td>
 
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3">
                     {editingId === prod.id_producto ? (
                       <input
                         type="text"
@@ -466,13 +472,17 @@ function InventoryView({ take }: { take: number }) {
                         style={{ borderColor: "#00152F", ["--tw-ring-color" as any]: "#FFBD00" }}
                       />
                     ) : (
-                      <span title={prod.descripcion} style={{ color: "#00152F" }}>
-                        {prod.descripcion.length > 40 ? `${prod.descripcion.substring(0, 40)}...` : prod.descripcion}
+                      <span
+                        title={prod.descripcion}
+                        className="block max-w-[14rem] sm:max-w-none truncate"
+                        style={{ color: "#00152F" }}
+                      >
+                        {prod.descripcion}
                       </span>
                     )}
                   </td>
 
-                  <td className="px-4 py-3" style={{ color: "#00152F" }}>
+                  <td className="px-3 sm:px-4 py-3 hidden md:table-cell" style={{ color: "#00152F" }}>
                     {editingId === prod.id_producto ? (
                       <input
                         type="text"
@@ -486,7 +496,7 @@ function InventoryView({ take }: { take: number }) {
                     )}
                   </td>
 
-                  <td className="px-4 py-3" style={{ color: "#00152F" }}>
+                  <td className="px-3 sm:px-4 py-3 hidden lg:table-cell" style={{ color: "#00152F" }}>
                     {editingId === prod.id_producto ? (
                       <input
                         type="text"
@@ -501,7 +511,7 @@ function InventoryView({ take }: { take: number }) {
                   </td>
 
                   <td
-                    className={`px-4 py-3 text-right font-bold ${
+                    className={`px-3 sm:px-4 py-3 text-right font-bold ${
                       prod.stock_actual === 0
                         ? "text-red-600"
                         : prod.stock_actual < 10
@@ -524,7 +534,7 @@ function InventoryView({ take }: { take: number }) {
                     )}
                   </td>
 
-                  <td className="px-4 py-3 text-right font-mono font-medium" style={{ color: "#00152F" }}>
+                  <td className="px-3 sm:px-4 py-3 text-right font-mono font-medium" style={{ color: "#00152F" }}>
                     {editingId === prod.id_producto ? (
                       <input
                         type="number"
@@ -541,7 +551,7 @@ function InventoryView({ take }: { take: number }) {
                     )}
                   </td>
 
-                  <td className="px-4 py-3" style={{ color: "#00152F" }}>
+                  <td className="px-3 sm:px-4 py-3 hidden xl:table-cell" style={{ color: "#00152F" }}>
                     {editingId === prod.id_producto ? (
                       <input
                         type="text"
@@ -555,7 +565,7 @@ function InventoryView({ take }: { take: number }) {
                     )}
                   </td>
 
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-3 sm:px-4 py-3 text-center hidden md:table-cell">
                     {editingId === prod.id_producto ? (
                       <select
                         value={editingData.estado ?? prod.estado}
@@ -568,7 +578,7 @@ function InventoryView({ take }: { take: number }) {
                       </select>
                     ) : (
                       <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                        className={`px-3 py-1 rounded-full text-[11px] font-semibold ${
                           prod.estado === "Activo"
                             ? "bg-green-100 text-green-800 border border-green-200"
                             : "bg-red-100 text-red-800 border border-red-200"
@@ -579,9 +589,9 @@ function InventoryView({ take }: { take: number }) {
                     )}
                   </td>
 
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-3 sm:px-4 py-3 text-center">
                     {editingId === prod.id_producto ? (
-                      <div className="flex justify-center space-x-2">
+                      <div className="flex justify-center gap-2">
                         <button
                           onClick={saveProduct}
                           disabled={saving}
@@ -599,7 +609,7 @@ function InventoryView({ take }: { take: number }) {
                         </button>
                       </div>
                     ) : (
-                      <div className="flex justify-center space-x-2">
+                      <div className="flex justify-center gap-2">
                         <button
                           onClick={() => startEditing(prod)}
                           className="text-white px-3 py-2 rounded-lg text-xs font-medium transition-opacity duration-200 hover:opacity-90 shadow-sm"
@@ -627,15 +637,15 @@ function InventoryView({ take }: { take: number }) {
 
       {/* Paginación inferior local */}
       {totalPages > 1 && (
-        <div className="mt-6 flex items-center justify-between p-4 bg-white rounded-lg shadow-md">
-          <div className="text-sm font-medium" style={{ color: "#00152F" }}>
+        <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-white rounded-lg shadow-md">
+          <div className="text-xs sm:text-sm font-medium" style={{ color: "#00152F" }}>
             Total: {filteredProductos.length} productos
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setCurrentPage(1)}
               disabled={currentPage === 1}
-              className="px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
+              className="w-full sm:w-auto px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
               style={{ backgroundColor: currentPage === 1 ? "#ccc" : "#00152F" }}
             >
               « Primera
@@ -643,7 +653,7 @@ function InventoryView({ take }: { take: number }) {
             <button
               onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
-              className="px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
+              className="w-full sm:w-auto px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
               style={{ backgroundColor: currentPage === 1 ? "#ccc" : "#00152F" }}
             >
               ‹ Anterior
@@ -675,7 +685,7 @@ function InventoryView({ take }: { take: number }) {
             <button
               onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
-              className="px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
+              className="w-full sm:w-auto px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
               style={{ backgroundColor: currentPage === totalPages ? "#ccc" : "#00152F" }}
             >
               Siguiente ›
@@ -683,7 +693,7 @@ function InventoryView({ take }: { take: number }) {
             <button
               onClick={() => setCurrentPage(totalPages)}
               disabled={currentPage === totalPages}
-              className="px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
+              className="w-full sm:w-auto px-3 py-2 rounded-lg font-medium disabled:opacity-50 text-white shadow-sm"
               style={{ backgroundColor: currentPage === totalPages ? "#ccc" : "#00152F" }}
             >
               Última »
