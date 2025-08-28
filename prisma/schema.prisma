@@ -83,3 +83,14 @@ model RecommendationItem {
 
   @@index([batchId])
 }
+
+model CotizacionParticipacion {
+  id          String   @id @default(uuid())
+  proveedor_id String
+  fecha        DateTime @default(now())
+  proyecto     String
+  accion       String
+  resultado    String
+  comentario   String?
+  sugerencia   String?
+}
