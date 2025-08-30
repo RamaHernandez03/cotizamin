@@ -199,7 +199,7 @@ export default function AuthForm() {
             </button>
 
             <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
-                ¿Ya tenes una cuenta?   <a href='http://localhost:3000/login' className='text-blue-700 hover:text-blue-500'>Inicia Sesion</a>
+                ¿Ya tenes una cuenta?   <a href='/login' className='text-blue-700 hover:text-blue-500'>Inicia Sesion</a>
               </label>
           </form>
 

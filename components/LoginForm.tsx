@@ -142,7 +142,7 @@ export default function LoginForm() {
             </button>
 
             <label className="block text-sm font-medium mb-1" style={{ color: '#00152F' }}>
-                ¿Aun no estas Registrado?   <a href='http://localhost:3000/register' className='text-blue-700 hover:text-blue-500'>Registrate aqui</a>
+                ¿Aun no estas Registrado?   <a href='/register' className='text-blue-700 hover:text-blue-500'>Registrate aqui</a>
               </label>
 
 
