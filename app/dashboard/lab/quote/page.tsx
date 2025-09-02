@@ -11,6 +11,64 @@ const AZUL = "#00152F";
 const AMARILLO = "#FFBD00";
 const GRIS = "#efefef";
 
+/* ==================== NUEVO: helpers alerta ==================== */
+const ALERT_MIN_SEARCHES = 10;         // total de búsquedas
+const ALERT_MIN_DISTINCT_USERS = 3;    // usuarios distintos
+const ALERT_WINDOW_DAYS = 7;           // ventana de tiempo
+const ALERT_COOLDOWN_DAYS = 14;        // evitar spam por key
+
+function normalizeKey(parts: { q: string; marca?: string; modelo?: string; material?: string }) {
+  const norm = (v?: string) => (v || "").trim().toLowerCase();
+  return [
+    `q=${norm(parts.q)}`,
+    `marca=${norm(parts.marca)}`,
+    `modelo=${norm(parts.modelo)}`,
+    `material=${norm(parts.material)}`
+  ].join("|");
+}
+
+async function shouldTriggerAlert({
+  key,
+  providerCount,
+}: {
+  key: string;
+  providerCount: number;
+}) {
+  if (providerCount > 3) return false; // sólo si hay 3 o menos proveedores
+
+  const since = new Date();
+  since.setDate(since.getDate() - ALERT_WINDOW_DAYS);
+
+  const logs = await prisma.productSearchLog.findMany({
+    where: { key_norm: key, createdAt: { gte: since } },
+    select: { user_email: true, user_id: true },
+  });
+
+  const total = logs.length;
+  const users = new Set(
+    logs.map(l => (l.user_id && l.user_id.trim()) || (l.user_email && l.user_email.trim()) || "anon")
+  ).size;
+
+  if (total < ALERT_MIN_SEARCHES) return false;
+  if (users < ALERT_MIN_DISTINCT_USERS) return false;
+
+  // Cooldown por key: si ya mandamos alerta similar en los últimos N días, no repetir
+  const sinceCooldown = new Date();
+  sinceCooldown.setDate(sinceCooldown.getDate() - ALERT_COOLDOWN_DAYS);
+
+  const already = await prisma.cotizacionParticipacion.findFirst({
+    where: {
+      proyecto: `Alerta demanda: ${key}`,
+      fecha: { gte: sinceCooldown },
+      accion: "Demanda alta, oferta limitada",
+    },
+    select: { id: true },
+  });
+
+  return !already;
+}
+/* ================== FIN NUEVO: helpers alerta ================== */
+
 type SearchParams = {
   q?: string;
   marca?: string;
@@ -29,12 +87,12 @@ export default async function LabQuotePage({
   if (!session) redirect("/login");
 
   // ---------- WHITELIST ----------
-  // .env: TEST_LAB_ALLOWED_EMAILS="tu@mail.com, cliente@mail.com"
   const allowed = (process.env.TEST_LAB_ALLOWED_EMAILS ?? "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
   const userEmail = (session.user as any)?.email?.toLowerCase() ?? "";
+  const userId = (session.user as any)?.id || (session.user as any)?.userId || (session.user as any)?.id_cliente || null;
   const isAllowed = allowed.length > 0 ? allowed.includes(userEmail) : true;
   if (!isAllowed) {
     return (
@@ -80,8 +138,12 @@ export default async function LabQuotePage({
       }>
     | null = null;
 
+  // ==================== NUEVO: variables para alerta ====================
+  const keyNorm = normalizeKey({ q, marca, modelo, material });
+  let providerCountForKey = 0;
+  // ======================================================================
+
   if (q) {
-    // 1) Traer coincidencias por filtros, ordenadas por precio asc
     const productos = await prisma.producto.findMany({
       where: {
         AND: [
@@ -103,23 +165,25 @@ export default async function LabQuotePage({
         material: true,
         precio_actual: true,
       },
-      take: 200, // tomamos varios y después deduplicamos por proveedor
+      take: 200,
     });
 
-    // 2) Elegimos el más barato por proveedor (para no repetir proveedor)
     const byProveedor = new Map<string, (typeof productos)[number]>();
     for (const p of productos) {
       if (!byProveedor.has(p.proveedor_id)) {
         byProveedor.set(p.proveedor_id, p);
       }
     }
-    // 3) Orden final y top N
     const uniques = Array.from(byProveedor.values()).sort(
       (a, b) => a.precio_actual - b.precio_actual
     );
     const top = uniques.slice(0, limit);
 
-    // 4) (Opcional) Traer nombre del proveedor si existe tabla cliente
+    // ====== NUEVO: cantidad real de proveedores que cumplen filtros ======
+    providerCountForKey = uniques.length;
+    // =====================================================================
+
+    // 4) nombre proveedor si existe cliente
     const providerIds = top.map((t) => t.proveedor_id);
     let nombres = new Map<string, { nombre?: string | null; email?: string | null }>();
     try {
@@ -128,9 +192,7 @@ export default async function LabQuotePage({
         select: { id_cliente: true, nombre: true, email: true },
       });
       cli.forEach((c) => nombres.set(c.id_cliente, { nombre: c.nombre, email: (c as any).email || null }));
-    } catch {
-      // si no existe el modelo cliente, seguimos sin nombres
-    }
+    } catch {}
 
     results = top.map((t, i) => ({
       rank: i + 1,
@@ -144,6 +206,47 @@ export default async function LabQuotePage({
       material: t.material,
       precio_actual: t.precio_actual,
     }));
+
+    /* ===================== NUEVO: LOG DE BÚSQUEDA ===================== */
+    // Nota: side-effect en GET; si preferís, podés moverlo a una Server Action con <form>.
+    await prisma.productSearchLog.create({
+      data: {
+        user_email: userEmail || null,
+        user_id: userId ? String(userId) : null,
+        q, marca: marca || null, modelo: modelo || null, material: material || null,
+        key_norm: keyNorm,
+      },
+    });
+
+    // Chequeo de disparo de alerta (demanda alta + oferta limitada)
+    const canAlert = await shouldTriggerAlert({
+      key: keyNorm,
+      providerCount: providerCountForKey,
+    });
+
+    if (canAlert && providerCountForKey > 0) {
+      // Notificamos a TODOS los proveedores que cumplieron los filtros (no sólo el top)
+      const proveedoresTodos = Array.from(byProveedor.values()).map(p => p.proveedor_id);
+      const uniqueProviders = Array.from(new Set(proveedoresTodos));
+
+      const detalleProducto = [q, marca && `Marca ${marca}`, modelo && `Modelo ${modelo}`, material && `Material ${material}`]
+        .filter(Boolean)
+        .join(" · ");
+
+      await prisma.cotizacionParticipacion.createMany({
+        data: uniqueProviders.map(pid => ({
+          proveedor_id: pid,
+          fecha: new Date(),
+          proyecto: `Alerta demanda: ${keyNorm}`,
+          accion: "Demanda alta, oferta limitada",
+          resultado: `Hubo más de ${ALERT_MIN_SEARCHES} búsquedas recientes de "${q}" y sólo ${Math.min(providerCountForKey, 3)} proveedor(es) lo ofrecen.`,
+          comentario: `Detalle: ${detalleProducto}. Ventana ${ALERT_WINDOW_DAYS} días. Usuarios distintos ≥ ${ALERT_MIN_DISTINCT_USERS}.`,
+          sugerencia: "Aprovechá la demanda: verificá stock/precio/alta del producto para destacar.",
+        })),
+        skipDuplicates: true, // por si el mismo proveedor entra dos veces
+      });
+    }
+    /* =================== FIN NUEVO: LOG + ALERTA ==================== */
   }
 
   const sent = searchParams.sent === "1";

@@ -95,3 +95,18 @@ model CotizacionParticipacion {
   comentario   String?
   sugerencia   String?
 }
+
+model ProductSearchLog {
+  id           String   @id @default(cuid())
+  user_email   String?
+  user_id      String?
+  q            String
+  marca        String?
+  modelo       String?
+  material     String?
+  key_norm     String   // hash/llave normalizada de los filtros
+  createdAt    DateTime @default(now())
+
+  @@index([key_norm, createdAt], name: "idx_key_time")
+}
+
