@@ -4,6 +4,12 @@ import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import StatWidget from "@/components/StatWidget";
 import Link from "next/link";
+import { Suspense } from "react";
+import { unstable_cache } from "next/cache";
+
+/* ===== Config RSC ===== */
+export const runtime = "nodejs";          // Prisma no corre en Edge
+export const revalidate = 60;             // fallback global (60s)
 
 /* ===== Utils ===== */
 function formatDateArg(date?: Date | null) {
@@ -14,7 +20,6 @@ function formatDateArg(date?: Date | null) {
   const yy = String(d.getFullYear()).slice(-2);
   return `${dd}/${mm}/${yy}`;
 }
-
 const DAYS_THRESHOLD = 7;
 function startOfMonth(d: Date) { const x = new Date(d); x.setDate(1); x.setHours(0,0,0,0); return x; }
 function daysAgo(n: number) { const d = new Date(); d.setDate(d.getDate() - n); return d; }
@@ -23,7 +28,7 @@ function daysBetween(date?: Date) { if (!date) return 30; const diffMs = Date.no
 function isTop3(resultado?: string | null) {
   if (!resultado) return false;
   const s = resultado.toLowerCase();
-  return s.includes("top 3") || s.includes("top3") || /rank\\s*:\\s*[1-3]/.test(s);
+  return s.includes("top 3") || s.includes("top3") || /rank\s*:\s*[1-3]/.test(s);
 }
 function hasCert(certs?: string | null, clave?: string) {
   if (!certs || !clave) return false;
@@ -41,6 +46,102 @@ function buildRadar(values: Record<string, number>): number[] {
   ];
 }
 
+/* ===== Data Layer (cacheada) ===== */
+type DashboardData = {
+  productosListados: number;
+  ultimoProductoFecha: Date | null;
+  cliente: { certificaciones: string | null; nombre: string | null } | null;
+  participacionesMes: number;
+  participaciones90d: number;
+  resultados90d: { resultado: string | null }[];
+  feedbacks5: {
+    id: string; fecha: Date; proyecto: string | null; accion: string | null;
+    resultado: string | null; comentario: string | null; sugerencia: string | null;
+  }[];
+  recBatch: null | {
+    fecha_analisis?: Date | null;
+    createdAt?: Date | null;
+    items: { id: string; tipo: string | null; mensaje: string | null; producto: string | null }[];
+  };
+};
+
+const getDashboardData = unstable_cache(
+  async (proveedorId: string): Promise<DashboardData> => {
+    const [
+      productosListados,
+      ultimoProducto,
+      cliente,
+      participacionesMes,
+      participaciones90d,
+      resultados90d,
+      feedbacks5,
+      recBatches
+    ] = await prisma.$transaction([
+      prisma.producto.count({ where: { proveedor_id: proveedorId } }),
+      prisma.producto.findFirst({
+        where: { proveedor_id: proveedorId },
+        orderBy: { fecha_actualizacion: "desc" },
+        select: { fecha_actualizacion: true },
+      }),
+      prisma.cliente.findUnique({
+        where: { id_cliente: proveedorId },
+        select: { certificaciones: true, nombre: true },
+      }),
+      prisma.cotizacionParticipacion.count({
+        where: { proveedor_id: proveedorId, fecha: { gte: startOfMonth(new Date()) } },
+      }),
+      prisma.cotizacionParticipacion.count({
+        where: { proveedor_id: proveedorId, fecha: { gte: daysAgo(90) } },
+      }),
+      prisma.cotizacionParticipacion.findMany({
+        where: { proveedor_id: proveedorId, fecha: { gte: daysAgo(90) } },
+        select: { resultado: true },
+      }),
+      prisma.cotizacionParticipacion.findMany({
+        where: { proveedor_id: proveedorId },
+        orderBy: { fecha: "desc" },
+        take: 5,
+        select: {
+          id: true, fecha: true, proyecto: true, accion: true, resultado: true,
+          comentario: true, sugerencia: true
+        },
+      }),
+      prisma.recommendationBatch.findMany({
+        where: { cliente_id: proveedorId },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          createdAt: true,
+          fecha_analisis: true as any, // por compatibilidad si el campo existe
+          items: { select: { id: true, tipo: true, mensaje: true, producto: true } }
+        },
+      }),
+    ]);
+
+    return {
+      productosListados,
+      ultimoProductoFecha: ultimoProducto?.fecha_actualizacion ?? null,
+      cliente,
+      participacionesMes,
+      participaciones90d,
+      resultados90d,
+      feedbacks5,
+      recBatch: recBatches?.[0]
+        ? {
+            createdAt: recBatches[0]?.createdAt ?? null,
+            // @ts-ignore opcional si tu schema tiene fecha_analisis
+            fecha_analisis: recBatches[0]?.fecha_analisis ?? null,
+            items: recBatches[0]?.items ?? [],
+          }
+        : null,
+    };
+  },
+  {
+    revalidate: 60,
+    tags: (proveedorId: string) => [`proveedor:${proveedorId}:home`], // útil para invalidar
+  } as any // TS narrow workaround para tags como función
+);
+
 /* ===== Page ===== */
 export default async function DashboardHomePage() {
   const session = await getServerSession(authOptions);
@@ -52,117 +153,66 @@ export default async function DashboardHomePage() {
       </main>
     );
   }
-
   const proveedorId = String((session.user as any).id_cliente ?? (session.user as any).id);
 
-  const [
-    productosListados,
-    ultimoProducto,
-    cliente,
-    participacionesMes,
-    participaciones90d,
-    top3Resultados90d,
-    feedbacks,
-    recBatches,
-  ] = await Promise.all([
-    prisma.producto.count({ where: { proveedor_id: proveedorId } }),
-    prisma.producto.findFirst({
-      where: { proveedor_id: proveedorId },
-      orderBy: { fecha_actualizacion: "desc" },
-      select: { fecha_actualizacion: true },
-    }),
-    prisma.cliente.findUnique({
-      where: { id_cliente: proveedorId },
-      select: { certificaciones: true, nombre: true },
-    }),
-    prisma.cotizacionParticipacion.count({
-      where: { proveedor_id: proveedorId, fecha: { gte: startOfMonth(new Date()) } },
-    }),
-    prisma.cotizacionParticipacion.count({
-      where: { proveedor_id: proveedorId, fecha: { gte: daysAgo(90) } },
-    }),
-    prisma.cotizacionParticipacion.findMany({
-      where: { proveedor_id: proveedorId, fecha: { gte: daysAgo(90) } },
-      select: { resultado: true },
-    }),
-    prisma.cotizacionParticipacion.findMany({
-      where: { proveedor_id: proveedorId },
-      orderBy: { fecha: "desc" },
-      take: 5,
-      select: {
-        id: true, fecha: true, proyecto: true, accion: true, resultado: true,
-        comentario: true, sugerencia: true
-      },
-    }),
-    prisma.recommendationBatch.findMany({
-      where: { cliente_id: proveedorId },
-      orderBy: { createdAt: "desc" },
-      take: 1,
-      include: { items: true },
-    }),
-  ]);
+  // 1) Traigo data cacheada
+  const data = await getDashboardData(proveedorId);
 
-  const ultimaFecha = ultimoProducto?.fecha_actualizacion ?? null;
+  // 2) Derivados ligeros (todo server-side, sin JS al cliente)
+  const { productosListados, ultimoProductoFecha, cliente, participacionesMes, participaciones90d, resultados90d } = data;
+
   let estado: "ok" | "pending" = "pending";
-  if (ultimaFecha) {
-    const diffMs = Date.now() - new Date(ultimaFecha).getTime();
+  if (ultimoProductoFecha) {
+    const diffMs = Date.now() - new Date(ultimoProductoFecha).getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     estado = diffDays <= DAYS_THRESHOLD ? "ok" : "pending";
   }
 
-  const top3Count = top3Resultados90d.reduce(
-    (acc: number, r: { resultado: string | null }) => acc + (isTop3(r.resultado) ? 1 : 0),
+  const top3Count = resultados90d.reduce(
+    (acc: number, r) => acc + (isTop3(r.resultado) ? 1 : 0),
     0
   );
   const visibilidadPct = participaciones90d > 0
     ? Math.round((top3Count / participaciones90d) * 100)
     : 0;
 
-    const pendientes: string[] = [];
-    const isNewAccount =
-    productosListados === 0 &&
-    participaciones90d === 0 &&
-    !ultimaFecha;
+  const pendientes: string[] = [];
+  const isNewAccount = productosListados === 0 && participaciones90d === 0 && !ultimoProductoFecha;
 
-    // Base baja si la cuenta es nueva, base media si no
-    let score = isNewAccount ? 20 : 40;
-  
-    // Sumas por evidencias/conductas
-    if (productosListados > 0) score += 25;               // Tiene catálogo cargado
-    if (estado === "ok") score += 15;                      // Stock actualizado reciente
-    if (hasCert(cliente?.certificaciones, "empresa")) score += 15;
-    if (hasCert(cliente?.certificaciones, "mina")) score += 10;
-    if (visibilidadPct >= 50) score += 10;                 // Buen % de Top 3 (últ. 90d)
-  
-    // Pendientes para mostrar oportunidades
-    if (!hasCert(cliente?.certificaciones, "empresa")) pendientes.push("Certificado de empresa");
-    if (!hasCert(cliente?.certificaciones, "mina")) pendientes.push("Certificado proveedor mina");
-    if (estado !== "ok") pendientes.push("Actualizar stock semanalmente");
-  
-    score = clamp(score, 0, 100);
+  let score = isNewAccount ? 20 : 40;
+  if (productosListados > 0) score += 25;
+  if (estado === "ok") score += 15;
+  if (hasCert(cliente?.certificaciones, "empresa")) score += 15;
+  if (hasCert(cliente?.certificaciones, "mina")) score += 10;
+  if (visibilidadPct >= 50) score += 10;
 
-    const baseRadar = buildRadar({
-      velocidad: clamp(100 - daysBetween(ultimaFecha ?? undefined) * 8, 20, 95),
-      calidad: 60 + visibilidadPct / 4,
-      precios: 60 + visibilidadPct / 3,
-      disponibilidad: estado === "ok" ? 85 : 55,
-      cumplimiento: 75,
-      participacion: Math.min(90, participacionesMes * 6 + 40),
-      reputacion: score, // <- antes: 65 + score / 10
-    });
+  if (!hasCert(cliente?.certificaciones, "empresa")) pendientes.push("Certificado de empresa");
+  if (!hasCert(cliente?.certificaciones, "mina")) pendientes.push("Certificado proveedor mina");
+  if (estado !== "ok") pendientes.push("Actualizar stock semanalmente");
 
-  const hasCotizaciones = participaciones90d > 0; // o participacionesMes > 0 si preferís el mes
+  score = clamp(score, 0, 100);
+
+  const baseRadar = buildRadar({
+    velocidad: clamp(100 - daysBetween(ultimoProductoFecha ?? undefined) * 8, 20, 95),
+    calidad: 60 + visibilidadPct / 4,
+    precios: 60 + visibilidadPct / 3,
+    disponibilidad: estado === "ok" ? 85 : 55,
+    cumplimiento: 75,
+    participacion: Math.min(90, participacionesMes * 6 + 40),
+    reputacion: score,
+  });
+
+  const hasCotizaciones = participaciones90d > 0;
   const radarData = hasCotizaciones ? baseRadar : Array(baseRadar.length).fill(0);
-  const recomendaciones = recBatches?.[0]?.items ?? [];
 
   return (
     <main className="p-6">
       <h1 className="text-2xl font-bold text-gray-900">Resumen</h1>
 
-      {/* KPIs top */}
+      {/* KPIs top (render inmediato) */}
       <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatWidget title="Productos listados" value={productosListados} />
-        <StatWidget title="Stock actualizado" value={estado === "pending" ? "PENDIENTE" : "OK"} subtitle={formatDateArg(ultimaFecha)} status={estado} />
+        <StatWidget title="Stock actualizado" value={estado === "pending" ? "PENDIENTE" : "OK"} subtitle={formatDateArg(ultimoProductoFecha)} status={estado} />
         <StatWidget title="Ofrece descuento por mayor" value="—" subtitle="(no definido en schema)" />
         <StatWidget title="Participación en cotizaciones" value={String(participaciones90d || 0)} subtitle="últimos 90 días" />
       </section>
@@ -200,7 +250,7 @@ export default async function DashboardHomePage() {
         </div>
       </section>
 
-      {/* Actividad reciente */}
+      {/* Actividad reciente (ligero) */}
       <section className="mt-6 rounded-2xl border bg-white p-4">
         <h2 className="mb-4 text-base font-bold text-gray-900">Actividad reciente</h2>
         <div className="grid gap-4 sm:grid-cols-3">
@@ -210,36 +260,58 @@ export default async function DashboardHomePage() {
         </div>
       </section>
 
-      {/* Feedback */}
-      <section className="mt-6 rounded-2xl border bg-white p-4">
-        <h2 className="text-base font-bold text-gray-900">Feedback de las 5 últimas cotizaciones</h2>
-        <div className="mt-3 space-y-3">
-          {feedbacks.length === 0
-            ? <EmptyLine text="Todavía no hay feedback registrado. Carga tu stock y participa de las cotizaciones" />
-            : feedbacks.map((f) => <FeedbackRow key={f.id} data={f} />)}
-        </div>
-        <div className="mt-3">
-          <Link href="/dashboard/feedback" className="inline-flex items-center rounded-full bg-gray-900 px-4 py-2 text-white text-sm">Ver historial</Link>
-        </div>
-      </section>
+      {/* Feedback (streaming con cache) */}
+      <Suspense fallback={<SectionSkeleton title="Feedback de las 5 últimas cotizaciones" rows={3} />}>
+        <FeedbackSection proveedorId={proveedorId} />
+      </Suspense>
 
-      {/* Recomendaciones */}
-      <section className="mt-6 rounded-2xl border bg-white p-4">
-        <h2 className="text-base font-bold text-gray-900">Recomendaciones</h2>
-        <div className="mt-3 space-y-3">
-          {recomendaciones.length === 0 ? (
-            <EmptyLine text='Aún no hay recomendaciones. Carga tu stock y actualiza la pestaña "Notificaciones" en tu menú' />
-          ) : (
-            recomendaciones.map((r: any) => (
-              <div key={r.id} className="rounded-xl border p-3 text-sm text-gray-800">
-                <div className="text-xs text-gray-500">{formatDateArg(recBatches[0].fecha_analisis ?? recBatches[0].createdAt)}</div>
-                <div><span className="font-semibold">[{r.tipo}]</span> {r.mensaje}{r.producto ? ` — ${r.producto}` : ""}</div>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+      {/* Recomendaciones (streaming con cache) */}
+      <Suspense fallback={<SectionSkeleton title="Recomendaciones" rows={3} />}>
+        <RecomendacionesSection proveedorId={proveedorId} />
+      </Suspense>
     </main>
+  );
+}
+
+/* ===== Secciones async cacheadas (streaming) ===== */
+async function FeedbackSection({ proveedorId }: { proveedorId: string }) {
+  const { feedbacks5 } = await getDashboardData(proveedorId);
+  return (
+    <section className="mt-6 rounded-2xl border bg-white p-4">
+      <h2 className="text-base font-bold text-gray-900">Feedback de las 5 últimas cotizaciones</h2>
+      <div className="mt-3 space-y-3">
+        {feedbacks5.length === 0
+          ? <EmptyLine text="Todavía no hay feedback registrado. Carga tu stock y participa de las cotizaciones" />
+          : feedbacks5.map((f) => <FeedbackRow key={f.id} data={f} />)}
+      </div>
+      <div className="mt-3">
+        <Link href="/dashboard/feedback" className="inline-flex items-center rounded-full bg-gray-900 px-4 py-2 text-white text-sm">Ver historial</Link>
+      </div>
+    </section>
+  );
+}
+
+async function RecomendacionesSection({ proveedorId }: { proveedorId: string }) {
+  const { recBatch } = await getDashboardData(proveedorId);
+  const items = recBatch?.items ?? [];
+  const fecha = recBatch?.fecha_analisis ?? recBatch?.createdAt ?? null;
+
+  return (
+    <section className="mt-6 rounded-2xl border bg-white p-4">
+      <h2 className="text-base font-bold text-gray-900">Recomendaciones</h2>
+      <div className="mt-3 space-y-3">
+        {items.length === 0 ? (
+          <EmptyLine text='Aún no hay recomendaciones. Carga tu stock y actualiza la pestaña "Notificaciones" en tu menú' />
+        ) : (
+          items.map((r) => (
+            <div key={r.id} className="rounded-xl border p-3 text-sm text-gray-800">
+              <div className="text-xs text-gray-500">{formatDateArg(fecha)}</div>
+              <div><span className="font-semibold">[{r.tipo ?? "—"}]</span> {r.mensaje ?? "—"}{r.producto ? ` — ${r.producto}` : ""}</div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -284,7 +356,6 @@ function VisibilityBar({ value }: { value: number }) {
     </div>
   );
 }
-
 function RadarChartSVG({ labels, values }: { labels: string[]; values: number[] }) {
   const count = labels.length;
   const R = 120;
@@ -321,5 +392,23 @@ function RadarChartSVG({ labels, values }: { labels: string[]; values: number[] 
         })}
       </svg>
     </div>
+  );
+}
+
+/* Skeleton simple para Suspense */
+function SectionSkeleton({ title, rows = 3 }: { title: string; rows?: number }) {
+  return (
+    <section className="mt-6 rounded-2xl border bg-white p-4 animate-pulse">
+      <h2 className="text-base font-bold text-gray-900">{title}</h2>
+      <div className="mt-3 space-y-3">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="rounded-xl border p-3">
+            <div className="h-3 w-32 bg-gray-200 rounded mb-2" />
+            <div className="h-3 w-full bg-gray-200 rounded mb-1" />
+            <div className="h-3 w-2/3 bg-gray-200 rounded" />
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
