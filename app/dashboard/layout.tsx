@@ -36,9 +36,6 @@ function MenuWidget() {
         <a href="/dashboard/notifications" className="flex items-center p-2 text-gray-700 hover:bg-gray-50 rounded-md transition-colors">
           <span className="mr-3">🔔</span> <span className="text-sm">Notificaciones</span>
         </a>
-        <a href="/dashboard/settings" className="flex items-center p-2 text-gray-700 hover:bg-gray-50 rounded-md transition-colors">
-          <span className="mr-3">⚙️</span> <span className="text-sm">Configuración</span>
-        </a>
         <a href="/dashboard/stats" className="flex items-center p-2 text-gray-700 hover:bg-gray-50 rounded-md transition-colors">
           <span className="mr-3">📊</span> <span className="text-sm">Estadísticas</span>
         </a>
