@@ -40,7 +40,7 @@ function MenuWidget() {
           <span className="mr-3">📊</span> <span className="text-sm">Estadísticas</span>
         </a>
         <a href="/dashboard/support" className="flex items-center p-2 text-gray-700 hover:bg-gray-50 rounded-md transition-colors">
-          <span className="mr-3">🛠️</span> <span className="text-sm">Soporte/Ayuda</span>
+          <span className="mr-3">🛠️</span> <span className="text-sm">Soporte</span>
         </a>
         <a href="/dashboard/profile" className="flex items-center p-2 text-gray-700 hover:bg-gray-50 rounded-md transition-colors">
           <span className="mr-3">👤</span> <span className="text-sm">Mi Perfil</span>
