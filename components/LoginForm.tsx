@@ -47,38 +47,13 @@ export default function LoginForm() {
           {/* Main content overlay */}
           <div className="absolute inset-0 flex flex-col justify-center items-center text-white p-12">
             <div className="text-center max-w-lg">
-              <h1 className="text-4xl xl:text-6xl font-bold mb-6 tracking-tight" style={{ color: '#efefef' }}>
-                Cotizamin
+              <h1 className="text-4xl xl:text-6xl font-bold mb-6 tracking-tight">
+                <span style={{ color: '#efefef' }}>Cotiza</span>
+                <span style={{ color: '#FFBD00' }}>min</span>
               </h1>
               <p className="text-lg xl:text-xl opacity-90 leading-relaxed mb-8">
                 Inicia sesión en tu gestor de productos de confianza
               </p>
-              <div className="flex items-center justify-center space-x-8 text-sm opacity-75">
-                <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center mb-2">
-                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <span>Seguro</span>
-                </div>
-                <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center mb-2">
-                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <span>Rápido</span>
-                </div>
-                <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center mb-2">
-                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                  <span>Confiable</span>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -86,8 +61,9 @@ export default function LoginForm() {
 
       {/* Mobile header - Only visible on mobile */}
       <div className="lg:hidden bg-gradient-to-r from-blue-900 via-indigo-900 to-purple-900 px-6 py-8 text-white text-center">
-        <h1 className="text-3xl font-bold mb-2" style={{ color: '#efefef' }}>
-          Cotizamin
+        <h1 className="text-3xl font-bold mb-2">
+          <span style={{ color: '#efefef' }}>Cotiza</span>
+          <span style={{ color: '#FFBD00' }}>min</span>
         </h1>
         <p className="text-sm opacity-90">
           Inicia sesión en tu cuenta
