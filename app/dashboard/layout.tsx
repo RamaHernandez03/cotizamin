@@ -31,7 +31,7 @@ function MenuWidget() {
           <span className="mr-3">⭐</span> <span className="text-sm">Ventas</span>
         </a>
         <a href="/dashboard/feedback" className="flex items-center p-2 text-gray-700 hover:bg-gray-50 rounded-md transition-colors">
-          <span className="mr-3">⭐</span> <span className="text-sm">Feedback</span>
+          <span className="mr-3">⭐</span> <span className="text-sm">Cotizaciones</span>
         </a>
         <a href="/dashboard/notifications" className="flex items-center p-2 text-gray-700 hover:bg-gray-50 rounded-md transition-colors">
           <span className="mr-3">🔔</span> <span className="text-sm">Notificaciones</span>

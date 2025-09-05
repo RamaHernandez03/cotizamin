@@ -43,6 +43,9 @@ export default function FeedbackClient({
 
   return (
     <div className="w-full px-4 pb-16 pt-6 md:px-8">
+            <header>
+        <h1 className="text-2xl mb-4 text-gray-900 font-semibold tracking-wide">HISTORIAL</h1>
+      </header>
       {/* MÉTRICAS */}
       <section
         className="grid grid-cols-1 gap-6 rounded-2xl p-6 shadow-sm md:grid-cols-[1.2fr,1fr]"
