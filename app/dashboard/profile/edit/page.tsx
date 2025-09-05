@@ -1,27 +1,38 @@
-// dashboard/profile/edit/Page.tsx
-
-
 'use client';
 
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { updateUserProfile } from '@/lib/actions';
+import {
+  ArrowLeft, Save, Loader2, User, Phone, Mail, IdCard, ShieldAlert, CheckCircle2
+} from 'lucide-react';
+
+type FormState = {
+  nombre: string;
+  telefono: string;
+  email: string;
+  ruc: string;
+};
 
 export default function EditProfilePage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormState>({
     nombre: '',
     telefono: '',
     email: '',
     ruc: '',
   });
 
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
   useEffect(() => {
     if (session?.user) {
-      const { nombre, apellido, telefono, email, ruc } = session.user as any;
+      const { nombre, telefono, email, ruc } = session.user as any;
       setFormData({
         nombre: nombre || '',
         telefono: telefono || '',
@@ -33,81 +44,223 @@ export default function EditProfilePage() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData((prevData) => ({
-      ...prevData,
+
+    // Evitar edición de RUC explícitamente
+    if (name === 'ruc') return;
+
+    setFormData((prev) => ({
+      ...prev,
       [name]: value,
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!session?.user?.id) return;
-
-    await updateUserProfile(session.user.id, {
-      nombre: formData.nombre,
-      telefono: formData.telefono,
-      ruc: formData.ruc,
-    });
-    router.push('/dashboard/profile');
+  const validate = () => {
+    if (!formData.nombre.trim()) return 'El nombre es obligatorio.';
+    if (formData.telefono && formData.telefono.length < 6) return 'El teléfono parece demasiado corto.';
+    return null;
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session?.user?.id) return;
+
+    const validation = validate();
+    if (validation) {
+      setErrorMsg(validation);
+      setSuccessMsg(null);
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+
+      // Solo actualizamos campos editables
+      await updateUserProfile(session.user.id, {
+        nombre: formData.nombre,
+        telefono: formData.telefono,
+        ruc: formData.ruc,
+      });
+
+      setSuccessMsg('¡Perfil actualizado correctamente!');
+      // Pequeño delay para que el usuario vea el estado y luego volver
+      setTimeout(() => router.push('/dashboard/profile'), 700);
+    } catch (err: any) {
+      setErrorMsg('No se pudieron guardar los cambios. Intenta nuevamente.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 flex flex-col items-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin text-[#FFBD00]" />
+          <p className="text-[#00152F] font-medium">Cargando sesión…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-xl mx-auto mt-10 p-6 bg-white rounded-lg shadow">
-      <h1 className="text-2xl font-semibold mb-6" style={{color: '#00152F'}}>Editar Perfil</h1>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>Nombre</label>
-          <input
-            type="text"
-            name="nombre"
-            value={formData.nombre}
-            onChange={handleChange}
-            style={{color: '#00152F'}}
-            className="w-full border rounded px-3 py-2"
-          />
+    <div className="min-h-screen p-4 lg:p-8">
+      <div className="max-w-3xl mx-auto">
+        {/* Breadcrumb / Back */}
+        <div className="mb-4">
+          <button
+            onClick={() => router.back()}
+            className="inline-flex items-center gap-2 text-[#00152F] hover:opacity-80 transition"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            Volver
+          </button>
         </div>
-        <div>
-          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>Teléfono</label>
-          <input
-            type="text"
-            name="telefono"
-            value={formData.telefono}
-            onChange={handleChange}
-            style={{color: '#00152F'}}
-            className="w-full border rounded px-3 py-2"
-          />
+
+        {/* Header */}
+        <div className="rounded-3xl overflow-hidden shadow-xl border border-slate-200/60">
+          <div className="bg-gradient-to-r from-[#00152F] to-[#001d3d] p-6 lg:p-8">
+            <h1 className="text-2xl lg:text-3xl font-bold text-white">Editar Perfil</h1>
+            <p className="text-slate-300 mt-1">Actualiza tus datos de contacto y nombre.</p>
+          </div>
+
+          {/* Alerts */}
+          {(errorMsg || successMsg) && (
+            <div className="px-6 lg:px-8 pt-6">
+              {errorMsg && (
+                <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800">
+                  <div className="mt-0.5">
+                    <ShieldAlert className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="font-semibold">Hubo un problema</p>
+                    <p className="text-sm">{errorMsg}</p>
+                  </div>
+                </div>
+              )}
+              {successMsg && (
+                <div className="flex items-start gap-3 rounded-2xl border border-green-200 bg-green-50 p-4 text-green-800">
+                  <div className="mt-0.5">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="font-semibold">Cambios guardados</p>
+                    <p className="text-sm">{successMsg}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="p-6 lg:p-8">
+            <div className="grid gap-6">
+              {/* Nombre */}
+              <div>
+                <label className="block mb-2 text-sm font-medium text-[#00152F]">Nombre</label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                    <User className="w-5 h-5 text-slate-400" />
+                  </div>
+                  <input
+                    type="text"
+                    name="nombre"
+                    value={formData.nombre}
+                    onChange={handleChange}
+                    className="w-full rounded-2xl border border-slate-200 bg-white py-3 pr-4 pl-12 text-[#00152F] placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-amber-200/60 focus:border-amber-300 transition"
+                    placeholder="Nombre o Razón Social"
+                  />
+                </div>
+              </div>
+
+              {/* Teléfono */}
+              <div>
+                <label className="block mb-2 text-sm font-medium text-[#00152F]">Teléfono</label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                    <Phone className="w-5 h-5 text-slate-400" />
+                  </div>
+                  <input
+                    type="tel"
+                    name="telefono"
+                    value={formData.telefono}
+                    onChange={handleChange}
+                    className="w-full rounded-2xl border border-slate-200 bg-white py-3 pr-4 pl-12 text-[#00152F] placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-amber-200/60 focus:border-amber-300 transition"
+                    placeholder="+54 9 11 1234-5678"
+                  />
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Incluí código de país si es posible.</p>
+              </div>
+
+              {/* Email (bloqueado) */}
+              <div>
+                <label className="block mb-2 text-sm font-medium text-[#00152F]">Email (no editable)</label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                    <Mail className="w-5 h-5 text-slate-400" />
+                  </div>
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    disabled
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-100 py-3 pr-4 pl-12 text-slate-500"
+                  />
+                </div>
+              </div>
+
+              {/* RUC (bloqueado) */}
+              <div>
+                <label className="block mb-2 text-sm font-medium text-[#00152F]">RUC (no editable)</label>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                    <IdCard className="w-5 h-5 text-slate-400" />
+                  </div>
+                  <input
+                    type="text"
+                    name="ruc"
+                    value={formData.ruc}
+                    disabled
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-100 py-3 pr-4 pl-12 text-slate-500"
+                  />
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Para actualizar el RUC, contactá soporte.</p>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="mt-8 flex flex-col sm:flex-row gap-3 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => router.push('/dashboard/profile')}
+                className="w-full sm:w-auto rounded-2xl border border-slate-300 bg-white px-6 py-3 font-semibold text-[#00152F] hover:bg-slate-50 transition"
+                disabled={submitting}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#00152F] to-[#001d3d] px-6 py-3 font-bold text-[#FFBD00] hover:shadow-lg hover:scale-[1.02] active:scale-[0.99] transition disabled:opacity-70"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Guardando…
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-5 h-5" />
+                    Guardar Cambios
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
         </div>
-        <div>
-          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>Email</label>
-          <input
-            type="email"
-            name="email"
-            value={formData.email}
-            style={{color: '#00152F'}}
-            disabled
-            className="w-full bg-gray-100 border rounded px-3 py-2"
-          />
-        </div>
-        <div>
-          <label className="block mb-1 font-medium" style={{color: '#00152F'}}>RUC</label>
-          <input
-            type="text"
-            name="ruc"
-            value={formData.ruc}
-            onChange={handleChange}
-            style={{color: '#00152F'}}
-            className="w-full border rounded px-3 py-2"
-          />
-        </div>
-        <button
-          type="submit"
-          style={{background: '#00152F'}}
-          className="text-white px-4 py-2 mt-4 rounded hover:bg-blue-700"
-        >
-          Guardar Cambios
-        </button>
-      </form>
+      </div>
     </div>
   );
 }

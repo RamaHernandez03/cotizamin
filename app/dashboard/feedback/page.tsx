@@ -150,7 +150,7 @@ export default async function HistorialPage() {
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-800 tracking-tight">
-            HISTORIAL
+            HISTORIAL DE COTIZACIONES
           </h1>
         </div>
 
