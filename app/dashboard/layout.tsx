@@ -1,10 +1,10 @@
-// app/dashboard/layout.tsx
 import { ReactNode } from "react";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import TopNavbar from "@/components/TopNavbar";
 import DashboardMenu from "@/components/DashboardMenu";
+import NotificationsWatcher from "@/components/NotificationsWatcher"; // 🟡 nuevo
 
 function WelcomeCard({ user, ruc }: { user: string; ruc: string }) {
   return (
@@ -30,12 +30,20 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
+  const clienteId =
+    (session.user as any)?.id_cliente ||
+    (session.user as any)?.id ||
+    (session.user as any)?.userId ||
+    "3a036ad5-a1ca-4b74-9a55-b945157fd63e"; // fallback dev
+
   return (
     <div className="min-h-screen bg-gray-50">
       <TopNavbar />
+      {/* 🟡 Watcher global: modal disponible en todas las rutas */}
+      <NotificationsWatcher clienteId={String(clienteId)} pollMs={60000} />
 
       <div className="flex flex-col md:flex-row gap-4 md:gap-6 px-3 sm:px-4 md:px-6 pt-4 md:pt-6">
-        <aside className="hidden md:block md:sticky md:top-20 md:self-start md:w-64 md:h-[calc(100vh-6rem)] space-y-6 overflow-y-auto">
+        <aside className="hidden md:block md:sticky md:top-20 md:self-start md:w-64 md:h[calc(100vh-6rem)] space-y-6 overflow-y-auto">
           <WelcomeCard user={(session.user as any).nombre || "Usuario"} ruc={(session.user as any).ruc || "N/A"} />
           <MenuWidget />
         </aside>
