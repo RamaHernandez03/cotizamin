@@ -217,15 +217,16 @@ export default function EditProfilePage() {
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
                     <IdCard className="w-5 h-5 text-slate-400" />
                   </div>
-                  <input
-                    type="text"
-                    name="ruc"
-                    value={formData.ruc}
-                    disabled
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-100 py-3 pr-4 pl-12 text-slate-500"
-                  />
+<input
+  name="ruc"
+  value={formData.ruc}
+  readOnly
+  className="w-full rounded-lg bg-slate-100 text-slate-600 cursor-not-allowed"
+/>
                 </div>
-                <p className="mt-1 text-xs text-slate-500">Para actualizar el RUC, contactá soporte.</p>
+                <p className="text-xs text-slate-500 mt-1">
+  El RUC no puede modificarse. Si necesitás corregirlo, contactá soporte.
+</p>
               </div>
             </div>
 

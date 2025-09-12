@@ -24,6 +24,8 @@ model Cliente {
   email_contacto  String?
   certificaciones String?
 
+  ruc_locked      Boolean  @default(false)
+
   productos       Producto[]
 }
 
