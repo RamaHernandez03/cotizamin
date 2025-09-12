@@ -10,10 +10,6 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-/* ===========================
-   MODELOS DE TU APLICACIÓN
-   =========================== */
-
 model Cliente {
   id_cliente      String   @id @default(cuid())
   nombre          String
