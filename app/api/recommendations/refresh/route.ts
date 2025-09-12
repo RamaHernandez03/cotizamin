@@ -1,11 +1,15 @@
-// app/api/recommendations/refresh/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { revalidateTag, revalidatePath } from "next/cache";
 
 function normalizeN8N(raw: any) {
   let payload: any = raw?.response?.response ?? raw?.response ?? raw;
   if (typeof payload === "string") {
-    try { payload = JSON.parse(payload); } catch { payload = { recomendaciones: [], resumen: {} }; }
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      payload = { recomendaciones: [], resumen: {} };
+    }
   }
   const recos = Array.isArray(payload.recomendaciones) ? payload.recomendaciones : [];
   return {
@@ -20,7 +24,12 @@ function normalizeN8N(raw: any) {
 
 export async function POST(req: NextRequest) {
   const { cliente_id } = await req.json();
-  if (!cliente_id) return NextResponse.json({ ok: false, error: "cliente_id required" }, { status: 400 });
+  if (!cliente_id) {
+    return NextResponse.json(
+      { ok: false, error: "cliente_id required" },
+      { status: 400 }
+    );
+  }
 
   const base = process.env.N8N_BASE_URL!;
   const path = process.env.N8N_RECO_PATH || "/webhook/recomendacion";
@@ -33,7 +42,10 @@ export async function POST(req: NextRequest) {
   });
 
   if (!n8nRes.ok) {
-    return NextResponse.json({ ok: false, error: `n8n ${n8nRes.status}` }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, error: `n8n ${n8nRes.status}` },
+      { status: 502 }
+    );
   }
 
   const normalized = normalizeN8N(await n8nRes.json());
@@ -63,6 +75,11 @@ export async function POST(req: NextRequest) {
 
     return batch;
   });
+
+  // ✅ Invalida el cache del Home para este cliente
+  revalidateTag(`proveedor:${cliente_id}:home`);
+  // (opcional) refresca el path del home
+  revalidatePath("/dashboard/home");
 
   return NextResponse.json({ ok: true, refreshedBatchId: created.id });
 }
