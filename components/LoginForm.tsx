@@ -3,6 +3,7 @@
 import { signIn } from 'next-auth/react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import GoogleSignInButton from "@/components/GoogleSignInButton";
 
 export default function LoginForm() {
   const [email, setEmail] = useState('')
@@ -112,6 +113,7 @@ export default function LoginForm() {
                 required
               />
             </div>
+            <GoogleSignInButton />
 
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">

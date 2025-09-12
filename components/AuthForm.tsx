@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
+import GoogleSignInButton from "@/components/GoogleSignInButton";
 
 export default function AuthForm() {
   const router = useRouter();
@@ -164,6 +165,7 @@ export default function AuthForm() {
                 required
               />
             </div>
+            <GoogleSignInButton />
 
             {message && (
               <div className={`px-4 py-3 rounded-lg text-sm ${

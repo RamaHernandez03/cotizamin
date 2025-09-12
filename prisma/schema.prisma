@@ -5,38 +5,37 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
-model Cliente {
-  id_cliente      String   @id            // si querés UUID automático: @default(uuid())
-  nombre          String
-  ruc             String   @unique
-  email           String   @unique        // requerido para login
-  password        String
-  fecha_registro  DateTime
+/* ===========================
+   MODELOS DE TU APLICACIÓN
+   =========================== */
 
-  // Opcionales
+model Cliente {
+  id_cliente      String   @id @default(cuid())
+  nombre          String
+  ruc             String?  @unique
+  email           String   @unique
+  password        String?
+  fecha_registro  DateTime @default(now())
+
   telefono        String?
   direccion       String?
   pais            String?
   email_contacto  String?
   certificaciones String?
 
-  // Relación 1:N con Producto (backrelation)
   productos       Producto[]
-
-  // (Opcional) relación con lotes de recomendaciones
-  // batches         RecommendationBatch[]
 }
 
 model Producto {
   id_producto          String   @id @default(uuid())
   proveedor_id         String
 
-  // Contraparte de la relación con Cliente
+  // Relación con Cliente
   cliente              Cliente  @relation(fields: [proveedor_id], references: [id_cliente], onDelete: Restrict, onUpdate: Cascade)
 
   codigo_interno       String
@@ -49,7 +48,7 @@ model Producto {
   stock_actual         Int      @default(0)
   precio_actual        Float    @default(0)
   moneda               String   @default("USD")
-  tiempo_entrega       String?  // string, no int
+  tiempo_entrega       String?
   ubicacion_stock      String?
   estado               String   @default("Activo")
   fecha_actualizacion  DateTime @default(now())
@@ -69,6 +68,7 @@ model RecommendationBatch {
 
   // (Opcional) si querés FK a Cliente, descomentá estas 2 líneas y la backrelation en Cliente
   // cliente       Cliente  @relation(fields: [cliente_id], references: [id_cliente], onDelete: Restrict)
+
   @@index([cliente_id, createdAt])
 }
 
@@ -77,7 +77,7 @@ model RecommendationItem {
   batchId   String
   tipo      String   // "precio" | "stock" | "perfil"
   mensaje   String
-  producto  String?  // null o texto
+  producto  String?
   prioridad String   // "alta" | "media" | "baja"
 
   batch     RecommendationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
@@ -86,7 +86,7 @@ model RecommendationItem {
 }
 
 model CotizacionParticipacion {
-  id          String   @id @default(uuid())
+  id           String   @id @default(uuid())
   proveedor_id String
   fecha        DateTime @default(now())
   proyecto     String
@@ -97,16 +97,67 @@ model CotizacionParticipacion {
 }
 
 model ProductSearchLog {
-  id           String   @id @default(cuid())
-  user_email   String?
-  user_id      String?
-  q            String
-  marca        String?
-  modelo       String?
-  material     String?
-  key_norm     String   // hash/llave normalizada de los filtros
-  createdAt    DateTime @default(now())
+  id         String   @id @default(cuid())
+  user_email String?
+  user_id    String?
+  q          String
+  marca      String?
+  modelo     String?
+  material   String?
+  key_norm   String   // hash/llave normalizada de los filtros
+  createdAt  DateTime @default(now())
 
   @@index([key_norm, createdAt], name: "idx_key_time")
 }
 
+/* ===========================
+   MODELOS REQUERIDOS POR NEXTAUTH
+   (para Google OAuth y sesiones)
+   =========================== */
+
+model User {
+  id            String   @id @default(cuid())
+  name          String?
+  email         String?  @unique
+  emailVerified DateTime?
+  image         String?
+
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?  @db.Text
+  access_token      String?  @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?  @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
