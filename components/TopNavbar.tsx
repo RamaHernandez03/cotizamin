@@ -48,7 +48,7 @@ export default function TopNavbar() {
             {/* Links solo desktop */}
             <nav className="hidden md:flex gap-6 lg:gap-8 text-sm md:text-base font-medium">
               <Link href="/dashboard/home" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">HOME</Link>
-              <Link href="/dashboard/contact" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">CONTÁCTANOS</Link>
+              <Link href="/dashboard/support" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">CONTÁCTANOS</Link>
             </nav>
           </div>
 
@@ -111,7 +111,7 @@ export default function TopNavbar() {
 
               <div className="mt-6 border-t pt-4">
                 <Link
-                  href="/dashboard/contact"
+                  href="/dashboard/support"
                   className="block w-full text-center rounded-md bg-[#0A1B2E] text-white py-2 text-sm font-medium hover:opacity-90"
                   onClick={() => setOpen(false)}
                 >
