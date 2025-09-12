@@ -24,70 +24,60 @@ export default function TopNavbar() {
 
   return (
     <>
-      {/* NAVBAR */}
-      <header className="w-full h-16 md:h-24 bg-[#0A1B2E] text-white flex items-center justify-between px-4 sm:px-6 md:px-8 lg:px-16 shadow-lg border-b border-gray-800">
-        <div className="flex items-center gap-4 md:gap-12">
-          {/* Botón hamburguesa SOLO en mobile */}
-          <button
-            className="md:hidden inline-flex items-center justify-center p-2 rounded-md border border-white/10 hover:bg-white/10 focus:outline-none"
-            aria-label="Abrir menú"
-            aria-expanded={open}
-            onClick={() => setOpen(true)}
-          >
-            {/* Ícono hamburguesa simple */}
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
+      {/* NAVBAR: fijo SOLO en mobile, estático en desktop */}
+      <header className="fixed md:static top-0 left-0 w-full z-50 md:z-auto bg-[#0A1B2E] text-white shadow-lg border-b border-gray-800">
+        <div className="mx-auto flex h-16 md:h-24 max-w-7xl items-center justify-between px-4 sm:px-6 md:px-8 lg:px-16">
+          <div className="flex items-center gap-4 md:gap-12">
+            {/* Botón hamburguesa SOLO en mobile */}
+            <button
+              className="md:hidden inline-flex items-center justify-center p-2 rounded-md border border-white/10 hover:bg-white/10 focus:outline-none"
+              aria-label="Abrir menú"
+              aria-expanded={open}
+              onClick={() => setOpen(true)}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
 
-          <Link href="/dashboard/home" className="text-xl md:text-2xl font-bold">
-            <span className="text-white">Cotiza</span>
-            <span className="text-[#FFBD00]">Min</span>
-          </Link>
+            <Link href="/dashboard/home" className="text-xl md:text-2xl font-bold">
+              <span className="text-white">Cotiza</span>
+              <span className="text-[#FFBD00]">Min</span>
+            </Link>
 
-          {/* Links solo desktop */}
-          <nav className="hidden md:flex gap-6 lg:gap-8 text-sm md:text-base font-medium">
-            <Link href="/dashboard/home" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">HOME</Link>
-            <Link href="/dashboard/contact" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">CONTÁCTANOS</Link>
-          </nav>
-        </div>
+            {/* Links solo desktop */}
+            <nav className="hidden md:flex gap-6 lg:gap-8 text-sm md:text-base font-medium">
+              <Link href="/dashboard/home" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">HOME</Link>
+              <Link href="/dashboard/contact" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">CONTÁCTANOS</Link>
+            </nav>
+          </div>
 
-        <div className="flex items-center gap-3 md:gap-6 max-w-[60%] md:max-w-none">
-          {nombre && (
-            <>
-              <div className="hidden sm:flex items-center gap-2 md:gap-3">
-                <span className="text-gray-400 font-medium text-xs md:text-sm">BIENVENIDO</span>
-                <span className="text-[#FFBD00] font-semibold uppercase truncate max-w-[120px] sm:max-w-[180px]">
-                  {nombre}
-                </span>
-              </div>
-              {/* Botón de cerrar sesión SOLO en desktop */}
-              <div className="hidden md:block">
-                <SignOutButton />
-              </div>
-            </>
-          )}
+          <div className="flex items-center gap-3 md:gap-6 max-w-[60%] md:max-w-none">
+            {nombre && (
+              <>
+                <div className="hidden sm:flex items-center gap-2 md:gap-3">
+                  <span className="text-gray-400 font-medium text-xs md:text-sm">BIENVENIDO</span>
+                  <span className="text-[#FFBD00] font-semibold uppercase truncate max-w-[120px] sm:max-w-[180px]">
+                    {nombre}
+                  </span>
+                </div>
+                <div className="hidden md:block">
+                  <SignOutButton />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* OVERLAY del Drawer (mobile) */}
-      {open && (
-        <div
-          className="fixed inset-0 z-50 md:hidden"
-          role="dialog"
-          aria-modal="true"
-        >
-          {/* Fondo oscuro clickeable para cerrar */}
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setOpen(false)}
-          />
+      {/* Spacer para que el contenido no quede tapado: SOLO en mobile */}
+      <div className="h-16 md:hidden" />
 
-          {/* Panel lateral */}
-          <aside
-            className="absolute left-0 top-0 h-full w-80 max-w-[85vw] bg-white text-gray-900 shadow-2xl p-4 overflow-y-auto flex flex-col"
-          >
-            {/* Header dentro del drawer */}
+      {/* Drawer mobile */}
+      {open && (
+        <div className="fixed inset-0 z-[60] md:hidden" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
+          <aside className="absolute left-0 top-0 h-full w-80 max-w-[85vw] bg-white text-gray-900 shadow-2xl p-4 overflow-y-auto flex flex-col">
             <div className="flex items-center justify-between mb-2">
               <div className="text-lg font-bold">
                 <span className="text-[#0A1B2E]">Cotiza</span>
@@ -104,26 +94,21 @@ export default function TopNavbar() {
               </button>
             </div>
 
-            {/* Bienvenida breve */}
             {session?.user && (
               <div className="bg-gray-50 rounded-lg border p-3 mb-4">
                 <p className="text-sm text-gray-700">
                   Hola <span className="font-semibold">{(session.user as any).nombre || "Usuario"}</span>
                 </p>
-                <p className="text-xs text-gray-500">
-                  RUC: {(session.user as any).ruc || "N/A"}
-                </p>
+                <p className="text-xs text-gray-500">RUC: {(session.user as any).ruc || "N/A"}</p>
               </div>
             )}
 
-            {/* Contenido principal del drawer */}
             <div className="flex-1">
               <div className="mb-3">
                 <h3 className="text-sm font-semibold text-gray-800 mb-2">MI CUENTA</h3>
                 <DashboardMenu onNavigate={() => setOpen(false)} />
               </div>
 
-              {/* Contáctanos */}
               <div className="mt-6 border-t pt-4">
                 <Link
                   href="/dashboard/contact"
@@ -135,7 +120,6 @@ export default function TopNavbar() {
               </div>
             </div>
 
-            {/* Botón de cerrar sesión al final del drawer */}
             {session?.user && (
               <div className="border-t pt-4 mt-4">
                 <div className="w-full">
