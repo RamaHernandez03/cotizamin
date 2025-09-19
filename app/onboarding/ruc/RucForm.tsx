@@ -4,6 +4,10 @@ import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useState, FormEvent } from "react";
 
+function isValidRuc11(v: string) {
+  return /^\d{11}$/.test(v);
+}
+
 export default function RucForm({ from }: { from: string }) {
   const router = useRouter();
   const { update } = useSession();
@@ -17,14 +21,15 @@ export default function RucForm({ from }: { from: string }) {
     setLoading(true);
     setErr(null);
     try {
+      if (!isValidRuc11(ruc)) throw new Error("El RUC debe tener exactamente 11 dígitos.");
+
       const fd = new FormData();
       fd.set("ruc", ruc);
       const res = await fetch("/onboarding/ruc/submit", { method: "POST", body: fd });
       const j = await res.json();
       if (!j.ok) throw new Error(j.error || "Error guardando RUC");
 
-      // refresca el JWT para que el middleware vea ruc_locked=true
-      await update({});
+      await update({}); // refresca JWT
       router.replace(from || "/dashboard/home");
       router.refresh();
     } catch (e: any) {
@@ -48,24 +53,30 @@ export default function RucForm({ from }: { from: string }) {
       {/* Contenido principal */}
       <div className="relative z-10 w-full max-w-md">
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-8 shadow-2xl border border-white/20">
-          <h1 className="text-3xl font-bold mb-3 text-white text-center">
-            Completa tu RUC
-          </h1>
+          <h1 className="text-3xl font-bold mb-3 text-white text-center">Completa tu RUC</h1>
           <p className="text-white/80 mb-8 text-center leading-relaxed">
             Para continuar usando CotizaMin necesitamos tu RUC. Se guarda una única vez.
           </p>
 
-          <form onSubmit={onSubmit} className="space-y-6">
+          <form onSubmit={onSubmit} className="space-y-6" noValidate>
             <div>
               <label className="block text-white font-medium mb-3">RUC</label>
               <input
                 value={ruc}
-                onChange={(e) => setRuc(e.target.value)}
+                onChange={(e) => {
+                  // solo números y tope 11
+                  const v = e.target.value.replace(/\D/g, "").slice(0, 11);
+                  setRuc(v);
+                  if (err) setErr(null);
+                }}
                 className="w-full rounded-xl bg-white/10 border border-white/30 px-4 py-3 text-white placeholder-white/50 outline-none focus:ring-2 focus:ring-[#FFBD00] focus:border-transparent backdrop-blur-sm transition-all duration-200"
                 placeholder="Ej: 12345678901"
                 required
                 inputMode="numeric"
+                maxLength={11}
+                pattern="\d{11}"
               />
+              <p className="mt-1 text-white/70 text-xs">Debe tener exactamente 11 dígitos.</p>
             </div>
 
             {err && (
@@ -75,20 +86,10 @@ export default function RucForm({ from }: { from: string }) {
             )}
 
             <button
-              disabled={loading || !ruc}
+              disabled={loading || !isValidRuc11(ruc)}
               className="w-full rounded-xl bg-gradient-to-r from-[#FFBD00] to-yellow-400 hover:from-yellow-400 hover:to-[#FFBD00] text-[#0A1B2E] font-bold py-3 px-6 disabled:opacity-50 disabled:cursor-not-allowed transform transition-all duration-200 hover:scale-105 shadow-lg"
             >
-              {loading ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Guardando...
-                </span>
-              ) : (
-                "Guardar RUC"
-              )}
+              {loading ? "Guardando..." : "Guardar RUC"}
             </button>
           </form>
         </div>

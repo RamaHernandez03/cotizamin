@@ -10,6 +10,7 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// prisma/schema.prisma (solo el modelo Cliente)
 model Cliente {
   id_cliente      String   @id @default(cuid())
   nombre          String
@@ -25,6 +26,7 @@ model Cliente {
   certificaciones String?
 
   ruc_locked      Boolean  @default(false)
+  email_verificado DateTime?
 
   productos       Producto[]
 }
