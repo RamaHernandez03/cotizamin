@@ -178,7 +178,6 @@ export default function AuthForm() {
                 style={{ backgroundColor: "white", color: "#00152F" }}
                 required
               />
-              <p className="mt-1 text-xs text-gray-600">Debe tener exactamente 11 dígitos.</p>
             </div>
 
             <div>
