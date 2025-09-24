@@ -268,8 +268,10 @@ export default async function StatsPage() {
     "3a036ad5-a1ca-4b74-9a55-b945157fd63e"; // fallback
 
   // Obtener datos
-  const estadisticas = await getEstadisticasActividad(String(proveedorId));
-  const proyectos = await getProyectoStats(String(proveedorId));
+  const [estadisticas, proyectos] = await Promise.all([
+  getEstadisticasActividad(String(proveedorId)),
+  getProyectoStats(String(proveedorId)),
+  ]);
   const comparativas = getComparativaMetricas(estadisticas);
 
   return (

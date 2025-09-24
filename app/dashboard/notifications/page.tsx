@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import RefreshRecosButton from "@/components/RefreshRecosButton";
+import { unstable_noStore as noStore } from "next/cache";
 import prisma from "@/lib/prisma";
 import NotificationsWatcher from "@/components/NotificationsWatcher";
 import { format } from "date-fns";
@@ -10,7 +10,9 @@ import { es } from "date-fns/locale";
 import Image from "next/image";
 import NotificationsImage from "../../../public/images/Notifications.jpeg";
 
-/* ========================= Tipos existentes ========================= */
+export const dynamic = "force-dynamic";
+
+/* ========================= Tipos ========================= */
 type Prioridad = "alta" | "media" | "baja";
 type Tipo = "precio" | "stock" | "perfil";
 
@@ -30,19 +32,12 @@ type RecoResponse = {
   resumen?: { nota_general?: string };
 };
 
-/* ========================= Utils existentes ========================= */
-function fmtFechaISO(iso?: string | null) {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, {
-      day: "2-digit",
-      month: "long",
-      year: "numeric",
-    });
-  } catch {
-    return iso ?? "—";
-  }
+/* ========================= Utils ========================= */
+async function getBaseFromRequestHeaders() {
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host = h.get("x-forwarded-host") ?? h.get("host")!;
+  return `${proto}://${host}`;
 }
 
 function PriorityBadge({ p }: { p: Prioridad }) {
@@ -59,23 +54,11 @@ function PriorityBadge({ p }: { p: Prioridad }) {
 }
 
 function TipoIcon({ tipo }: { tipo: Tipo }) {
-  const map: Record<Tipo, string> = {
-    precio: "💲",
-    stock: "📦",
-    perfil: "👤",
-  };
+  const map: Record<Tipo, string> = { precio: "💲", stock: "📦", perfil: "👤" };
   return <span className="mr-2">{map[tipo] ?? "🔔"}</span>;
 }
 
-async function getBase() {
-  const h = await headers();
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const host = h.get("x-forwarded-host") ?? h.get("host")!;
-  return `${proto}://${host}`;
-}
-
-async function fetchRecos(clienteId: string): Promise<RecoResponse> {
-  const base = await getBase();
+async function fetchRecos(base: string, clienteId: string): Promise<RecoResponse> {
   const res = await fetch(`${base}/api/recommendations?cliente_id=${clienteId}`, {
     cache: "no-store",
   });
@@ -91,38 +74,25 @@ async function fetchRecos(clienteId: string): Promise<RecoResponse> {
   return res.json();
 }
 
-/* ========================= NUEVO: Alertas de Demanda ========================= */
+/* ========================= Alertas de Demanda ========================= */
 type AlertaDemanda = {
   id: string;
   fecha: Date;
-  proyecto: string;   // "Alerta demanda: q=...|marca=...|modelo=...|material=..."
+  proyecto: string;
   comentario: string | null;
   sugerencia: string | null;
 };
 
 function parseFiltroFromProyecto(proyecto: string) {
-  // Muestra solo la parte clave luego de "Alerta demanda: "
   const idx = proyecto.indexOf("Alerta demanda:");
   if (idx === -1) return proyecto;
   return proyecto.slice(idx + "Alerta demanda:".length).trim();
 }
 
-function fmtFecha(d: Date) {
-  try {
-    return d.toLocaleDateString(undefined, {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return String(d);
-  }
-}
-
 async function fetchAlertasDemanda(proveedorId: string, days = 30): Promise<AlertaDemanda[]> {
   const since = new Date();
   since.setDate(since.getDate() - days);
-  const rows = await prisma.cotizacionParticipacion.findMany({
+  return prisma.cotizacionParticipacion.findMany({
     where: {
       proveedor_id: proveedorId,
       accion: "Demanda alta, oferta limitada",
@@ -138,33 +108,43 @@ async function fetchAlertasDemanda(proveedorId: string, days = 30): Promise<Aler
     },
     take: 200,
   });
-  return rows;
 }
 
 /* ========================= Página ========================= */
 export default async function NotificationsPage() {
+  noStore(); // evitar cache del runtime
+
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
-  // intenta varias propiedades habituales para el id del cliente
   const clienteId =
     (session.user as any)?.id_cliente ||
     (session.user as any)?.id ||
     (session.user as any)?.userId ||
-    "3a036ad5-a1ca-4b74-9a55-b945157fd63e"; // fallback para pruebas
+    "3a036ad5-a1ca-4b74-9a55-b945157fd63e";
 
-  // Recomendaciones (lo que ya tenías)
-  const data = await fetchRecos(String(clienteId));
+  // Construir base UNA sola vez
+  const base = await getBaseFromRequestHeaders();
+
+  // Paralelizar lo que no depende entre sí
+  const [data, metaJson, alertas] = await Promise.all([
+    fetchRecos(base, String(clienteId)),
+    fetch(`${base}/api/recommendations/latest?cliente_id=${clienteId}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { batchId: null }))
+      .catch(() => ({ batchId: null })),
+    fetchAlertasDemanda(String(clienteId), 30),
+  ]);
+
   const recos = data.recomendaciones ?? [];
-  const countAlta = recos.filter((r) => r.prioridad === "alta").length;
-  const countMedia = recos.filter((r) => r.prioridad === "media").length;
-  const countBaja = recos.filter((r) => r.prioridad === "baja").length;
-  const base = await getBase();
-  const metaRes = await fetch(`${base}/api/recommendations/latest?cliente_id=${clienteId}`, { cache: "no-store" });
-  const meta = metaRes.ok ? await metaRes.json() : { batchId: null };
+  let countAlta = 0,
+    countMedia = 0,
+    countBaja = 0;
+  for (const r of recos) {
+    if (r.prioridad === "alta") countAlta++;
+    else if (r.prioridad === "media") countMedia++;
+    else countBaja++;
+  }
 
-  // NUEVO: Alertas de demanda (últimos 30 días)
-  const alertas = await fetchAlertasDemanda(String(clienteId), 30);
   const lastAlerta = alertas[0]?.fecha ?? null;
   const totalAlertas = alertas.length;
 
@@ -173,8 +153,8 @@ export default async function NotificationsPage() {
       <div className="mx-auto max-w-7xl">
         <NotificationsWatcher
           clienteId={String(clienteId)}
-          initialBatchId={meta.batchId}
-          pollMs={10000} // 10s para testear
+          initialBatchId={metaJson.batchId}
+          pollMs={10000}
         />
 
         {/* Header */}
@@ -187,99 +167,77 @@ export default async function NotificationsPage() {
         {/* Tarjeta de actividad reciente */}
         <div className="mb-8">
           <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#00152F] to-[#001a3d] shadow-xl">
-            {/* Patrón de fondo */}
-            <div className="absolute inset-0 bg-[url('/mining-pattern.png')] opacity-10"></div>
-            
-            {/* Contenido */}
+            <div className="absolute inset-0 bg-[url('/mining-pattern.png')] opacity-10" />
             <div className="relative flex flex-col lg:flex-row items-center p-8 lg:p-10">
-              {/* Información principal */}
               <div className="flex-1 text-white space-y-4 lg:pr-8">
                 <div className="flex items-center space-x-3 mb-6">
                   <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center">
-<svg
-  className="w-6 h-6 text-white"
-  fill="none"
-  stroke="currentColor"
-  viewBox="0 0 24 24"
->
-  <path
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    strokeWidth={2}
-    d="M13 16h-1v-4h-1m1-4h.01M12 20c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8z"
-  />
-</svg>
+                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 20c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8z" />
+                    </svg>
                   </div>
-                  <h2 className="text-2xl font-bold text-yellow-300">
-                    ACTIVIDAD RECIENTE:
-                  </h2>
+                  <h2 className="text-2xl font-bold text-yellow-300">ACTIVIDAD RECIENTE:</h2>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-lg">
                   <div>
                     <div className="font-semibold mb-1">Último Análisis:</div>
                     <div className="text-blue-100">
-                      {data.fecha_analisis 
+                      {data.fecha_analisis
                         ? format(new Date(data.fecha_analisis), "dd MMMM yyyy", { locale: es })
-                        : "Sin análisis recientes"
-                      }
+                        : "Sin análisis recientes"}
                     </div>
                   </div>
-                  
+
                   <div>
                     <div className="font-semibold mb-1">Total Recomendaciones:</div>
                     <div className="text-blue-100">
-                      {data.total_recomendaciones ?? recos.length} Notificaciones
+                      {(data.total_recomendaciones ?? recos.length)} Notificaciones
                     </div>
                   </div>
 
                   <div>
                     <div className="font-semibold mb-1">Alertas de Demanda:</div>
-                    <div className="text-blue-100">
-                      {totalAlertas} Alertas (últimos 30 días)
-                    </div>
+                    <div className="text-blue-100">{totalAlertas} Alertas (últimos 30 días)</div>
                   </div>
 
                   <div>
                     <div className="font-semibold mb-1">Prioridades:</div>
                     <div className="flex gap-3 text-sm">
                       <span className="inline-flex text-blue-100 items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> 
+                        <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
                         Alta: {countAlta}
                       </span>
                       <span className="inline-flex text-blue-100 items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" /> 
+                        <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
                         Media: {countMedia}
                       </span>
                       <span className="inline-flex text-blue-100 items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> 
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
                         Baja: {countBaja}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Nota general */}
                 <div className="mt-6 p-4 bg-white/10 backdrop-blur-sm rounded-xl border border-white/20">
                   <div className="text-sm font-semibold mb-2">Resumen del Sistema:</div>
                   <div className="text-sm text-blue-100">
-                    {data?.resumen?.nota_general ??
-                      "La IA generará recomendaciones para optimizar tu competitividad y catálogo."}
+                    {data?.resumen?.nota_general ?? "La IA generará recomendaciones para optimizar tu competitividad y catálogo."}
                   </div>
                 </div>
               </div>
 
-              {/* Área de la imagen - placeholder por ahora */}
               <div className="lg:flex-shrink-0 mt-8 lg:mt-0">
-                <div className="w-72 h-48 lg:w-80 lg:h-52 bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl relative flex items-center justify-center">
-                    <Image
+                <div className="w-72 h-48 lg:w-80 lg:h-52 bg-white/10 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl relative">
+                  <Image
                     src={NotificationsImage}
                     alt="Panel de Notificaciones"
                     fill
                     priority
                     className="object-cover"
                   />
-                    <div className="text-sm">Panel de Notificaciones</div>
+                  <div className="absolute inset-0 bg-gradient-to-br from-yellow-400/20 to-orange-600/40" />
                 </div>
               </div>
             </div>
