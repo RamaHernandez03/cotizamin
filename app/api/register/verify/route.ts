@@ -12,23 +12,20 @@ export async function GET(req: NextRequest) {
   if (!email || !token) return redirectTo("missing");
 
   const vt = await prisma.verificationToken.findUnique({
-    where: { token }, // token es unique en tu modelo
+    where: { token },
   });
 
   if (!vt || vt.identifier !== email) return redirectTo("invalid");
   if (vt.expires < new Date()) {
-    // limpiar token vencido
     await prisma.verificationToken.delete({ where: { token } }).catch(() => {});
     return redirectTo("expired");
   }
-
-  // Marcar cliente como verificado
+  
   await prisma.cliente.update({
     where: { email },
     data: { email_verificado: new Date() },
   });
 
-  // Borrar token usado
   await prisma.verificationToken.delete({ where: { token } }).catch(() => {});
 
   return redirectTo("ok");

@@ -20,6 +20,16 @@ type FeedbackRow = {
   sugerencia?: string;
 };
 
+type EventRowDB = {
+  id: string;
+  fecha: Date;
+  proyecto: string | null;
+  accion: string | null;
+  resultado: string | null;
+  comentario: string | null;
+  sugerencia: string | null;
+};
+
 type FeedbackMetrics = {
   totalParticipaciones: number;
   pctRespuestaATiempo: number;
@@ -44,9 +54,15 @@ export default async function HistorialPage() {
     session.user.id;
 
   // Obtener datos reales o usar mock
-  let rows: FeedbackRow[] = [];
-  try {
-    const data = await prisma.cotizacionParticipacion.findMany({
+// Obtener datos reales o usar mock
+let rows: FeedbackRow[] = [];
+let metrics: FeedbackMetrics;
+let suggestionsFromRows = 0;
+let aceptadasCount = 0; // <-- NUEVO: declarada en el scope superior
+
+try {
+  const [events, metricsRow] = await Promise.all([
+    prisma.cotizacionParticipacion.findMany({
       where: { proveedor_id: String(proveedorId) },
       orderBy: { fecha: "desc" },
       select: {
@@ -59,88 +75,102 @@ export default async function HistorialPage() {
         sugerencia: true,
       },
       take: 100,
-    });
+    }) as Promise<EventRowDB[]>,
+    prisma.quoteMetricsDaily.findFirst({
+      where: { proveedor_id: String(proveedorId) },
+      orderBy: { fecha: "desc" },
+    }),
+  ]);
 
-    rows = data.map((r: any) => ({
-      id: String(r.id),
-      fecha: new Date(r.fecha).toISOString(),
-      proyecto: r.proyecto ?? "-",
-      accion: r.accion ?? "-",
-      resultado: r.resultado ?? "-",
-      comentario: r.comentario ?? "",
-      sugerencia: r.sugerencia ?? "",
-    }));
-  } catch {
-    // Mock data
-    rows = [
-      {
-        id: "1",
-        fecha: new Date("2025-07-21").toISOString(),
-        proyecto: "Cotización CAPEX – DR3",
-        accion: "Participó enviando cotización",
-        resultado: "En evaluación",
-        comentario: "Envío dentro del plazo",
-        sugerencia: "Mejorar el detalle de plazos y garantías (n8n).",
-      },
-      {
-        id: "2",
-        fecha: new Date("2025-07-10").toISOString(),
-        proyecto: "Solicitud Stock – Filtro 450mm",
-        accion: "Actualizó stock",
-        resultado: "Aceptado",
-        comentario: "Se validaron cantidades",
-        sugerencia: "Mantener stock de seguridad en 15 uds (n8n).",
-      },
-      {
-        id: "3",
-        fecha: new Date("2025-06-28").toISOString(),
-        proyecto: "Cotización Botadero Norte",
-        accion: "No participó",
-        resultado: "-",
-        comentario: "No envió oferta",
-        sugerencia: "Automatizar recordatorio 48h antes del cierre (n8n).",
-      },
-      {
-        id: "4",
-        fecha: new Date("2025-06-15").toISOString(),
-        proyecto: "Cotización CAPEX – Mina",
-        accion: "Participó",
-        resultado: "Cotización no seleccionada",
-        comentario: "Superado por precio más bajo",
-        sugerencia: "Ajustar precio del ítem 'Filtro 450mm' un 6–8% (benchmark n8n).",
-      },
-    ];
+  rows = events.map((r: EventRowDB) => ({
+    id: String(r.id),
+    fecha: new Date(r.fecha).toISOString(),
+    proyecto: r.proyecto ?? "-",
+    accion: r.accion ?? "-",
+    resultado: r.resultado ?? "-",
+    comentario: r.comentario ?? "",
+    sugerencia: r.sugerencia ?? "",
+  }));
+
+  // <-- NUEVO: calcular aceptadasCount también en el try
+  aceptadasCount = rows.filter(
+    (r) => (r.resultado || "").toLowerCase().includes("acept")
+  ).length;
+
+  suggestionsFromRows = rows.filter(
+    (r) => (r.sugerencia ?? "").trim().length > 0
+  ).length;
+
+  if (metricsRow) {
+    metrics = {
+      totalParticipaciones: metricsRow.total_participaciones,
+      pctRespuestaATiempo: metricsRow.pct_respuesta_tiempo,
+      pctAceptacion: metricsRow.pct_aceptacion,
+      promedioCalificacion: metricsRow.promedio_calificacion,
+      tiempoPromedioEntregaDias: metricsRow.tiempo_prom_entrega_dias,
+      ultimaParticipacion: rows[0]?.fecha,
+      pendientesEvaluacion: metricsRow.pendientes_evaluacion,
+    };
+  } else {
+    const participaciones = rows.filter(
+      (r) =>
+        (r.accion || "").toLowerCase().includes("particip") ||
+        (r.accion || "").toLowerCase().includes("cotiz") // acepta con o sin tilde
+    );
+
+    const total = participaciones.length;
+    const onTime = participaciones.filter((r) =>
+      (r.comentario || "").toLowerCase().includes("plazo")
+    ).length;
+
+    const aceptadas = aceptadasCount; // <- reutilizamos el conteo ya hecho
+    const enEvaluacion = rows.filter((r) =>
+      (r.resultado || "").toLowerCase().includes("evalua")
+    ).length;
+
+    metrics = {
+      totalParticipaciones: total,
+      pctRespuestaATiempo: total ? Math.round((onTime / total) * 100) : 0,
+      pctAceptacion: rows.length ? Math.round((aceptadas / rows.length) * 100) : 0,
+      promedioCalificacion: 4.3,
+      tiempoPromedioEntregaDias: 5,
+      ultimaParticipacion: rows[0]?.fecha,
+      pendientesEvaluacion: enEvaluacion,
+    };
   }
+} catch (e) {
+  rows = [/* ... tus mocks ... */];
 
-  // Calcular métricas
   const participaciones = rows.filter(
     (r) =>
-      r.accion?.toLowerCase().includes("particip") ||
-      r.accion?.includes("cotización")
+      (r.accion || "").toLowerCase().includes("particip") ||
+      (r.accion || "").toLowerCase().includes("cotiz")
   );
-
   const total = participaciones.length;
   const onTime = participaciones.filter((r) =>
     (r.comentario || "").toLowerCase().includes("plazo")
   ).length;
 
   const aceptadas = rows.filter(
-    (r) => r.resultado?.toLowerCase() === "aceptado"
+    (r) => (r.resultado || "").toLowerCase().includes("acept")
   ).length;
 
-  const enEvaluacion = rows.filter(
-    (r) => r.resultado?.toLowerCase().includes("evalua")
+  const enEvaluacion = rows.filter((r) =>
+    (r.resultado || "").toLowerCase().includes("evalua")
   ).length;
 
-  const metrics: FeedbackMetrics = {
+  aceptadasCount = aceptadas;
+
+  metrics = {
     totalParticipaciones: total,
     pctRespuestaATiempo: total ? Math.round((onTime / total) * 100) : 0,
     pctAceptacion: rows.length ? Math.round((aceptadas / rows.length) * 100) : 0,
     promedioCalificacion: 4.3,
     tiempoPromedioEntregaDias: 5,
-    ultimaParticipacion: rows.length > 0 ? rows[0].fecha : undefined,
+    ultimaParticipacion: rows[0]?.fecha,
     pendientesEvaluacion: enEvaluacion,
   };
+}
 
   const suggestions = rows.filter((r) => r.sugerencia && r.sugerencia.trim().length > 0);
 
@@ -194,11 +224,11 @@ export default async function HistorialPage() {
                   </div>
 
                   <div>
-                    <div className="font-semibold mb-1">Ofertas Aceptadas:</div>
-                    <div className="text-blue-100">
-                      {aceptadas} Aceptadas ({metrics.pctAceptacion}%)
-                    </div>
-                  </div>
+  <div className="font-semibold mb-1">Ofertas Aceptadas:</div>
+  <div className="text-blue-100">
+    {aceptadasCount} Aceptadas ({metrics.pctAceptacion}%)
+  </div>
+</div>
 
                   <div>
                     <div className="font-semibold mb-1">Pendientes / En Evaluación:</div>

@@ -94,7 +94,10 @@ model CotizacionParticipacion {
   resultado    String
   comentario   String?
   sugerencia   String?
+
+  @@index([proveedor_id, fecha], name: "cotip_part_idx_prov_fecha") // NUEVO
 }
+
 
 model ProductSearchLog {
   id         String   @id @default(cuid())
@@ -161,3 +164,58 @@ model VerificationToken {
 
   @@unique([identifier, token])
 }
+
+/// --- NUEVO: Métricas diarias “cocinadas” para /dashboard/feedback
+model QuoteMetricsDaily {
+  id                        String   @id @default(cuid())
+  proveedor_id              String
+  fecha                     DateTime // trunc YYYY-MM-DD (usa CURRENT_DATE en n8n)
+  total_participaciones     Int
+  pct_respuesta_tiempo      Int
+  pct_aceptacion            Int
+  promedio_calificacion     Float     @default(0)
+  tiempo_prom_entrega_dias  Int       @default(0)
+  pendientes_evaluacion     Int       @default(0)
+  createdAt                 DateTime  @default(now())
+
+  @@unique([proveedor_id, fecha], name: "quote_metrics_unique")
+  @@index([proveedor_id, fecha])
+}
+
+/// --- NUEVO: Sugerencias textuales derivadas de reglas/LLM sobre cotizaciones
+model QuoteSuggestion {
+  id            String   @id @default(cuid())
+  proveedor_id  String
+  fecha         DateTime @default(now())
+  texto         String
+  fuente        String?  // 'rule' | 'llm' | etc.
+  ref_id        String?  // id de la participación relacionada, si aplica
+  createdAt     DateTime @default(now())
+
+  @@index([proveedor_id, fecha])
+}
+
+/// --- NUEVO: Alertas de demanda (separadas de CotizacionParticipacion)
+model DemandAlert {
+  id           String   @id @default(cuid())
+  proveedor_id String
+  fecha        DateTime
+  filtro       String
+  comentario   String?
+  sugerencia   String?
+  createdAt    DateTime @default(now())
+
+  @@index([proveedor_id, fecha])
+}
+
+/// --- OPCIONAL (recomendado): tracking de jobs n8n (refresh, cron, etc.)
+model Job {
+  id         String   @id
+  tipo       String   // 'reco' | 'quotes-metrics' | 'demand' | ...
+  owner_id   String?
+  status     String   // 'queued' | 'running' | 'done' | 'error'
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+  error      String?
+}
+

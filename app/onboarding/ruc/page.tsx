@@ -7,7 +7,6 @@ export default function Page({
   searchParams?: { from?: string };
 }) {
   const fromParam = typeof searchParams?.from === "string" ? searchParams!.from! : undefined;
-  // Usá el que prefieras como default
   const from = fromParam && fromParam.length > 0 ? fromParam : "/dashboard/home";
 
   return (
