@@ -1,7 +1,7 @@
 // app/dashboard/feedback/FeedbackClient.tsx
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -27,6 +27,46 @@ const AZUL = "#00152F";
 const AMARILLO = "#FFBD00";
 const GRIS = "#efefef";
 
+/* ==================== Helpers visuales ==================== */
+function extractDescAndCode(comentario?: string, fallbackProyecto?: string) {
+  const c = comentario || "";
+  const mDesc = c.match(/Producto:\s*([^•]+?)(?:•|$)/i);
+  const mCode = c.match(/Código:\s*([A-Za-z0-9._-]+)/i);
+  const desc = mDesc ? mDesc[1].trim() : null;
+  const code = mCode ? mCode[1].trim() : null;
+  if (desc) return `${desc}${code ? ` - ${code}` : ""}`;
+  return fallbackProyecto || "-";
+}
+const clean = (t?: string) => (t ?? "").replace(/simulada/ig, "").trim();
+/* ========================================================== */
+
+/** Bloque para comentario con scroll interno si supera el alto máximo */
+function CommentCell({ text, sugerencia }: { text?: string; sugerencia?: string }) {
+  const comentario = text?.trim() ?? "";
+  if (!comentario) return <span className="text-slate-400">-</span>;
+
+  return (
+    <div className="text-slate-700">
+      <div
+        className={[
+          "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
+          "whitespace-pre-wrap break-words",
+          "overflow-y-auto pr-2",           // scroll vertical + un poco de padding para la barra
+          "max-h-40 md:max-h-56",           // alto máximo (ajustable)
+        ].join(" ")}
+      >
+        {comentario}
+      </div>
+
+      {sugerencia && (
+        <div className="mt-2 text-xs italic text-blue-700/90">
+          Sugerencia IA: {sugerencia}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FeedbackClient({
   rows,
   metrics,
@@ -43,43 +83,28 @@ export default function FeedbackClient({
 
   return (
     <div className="w-full px-4 pb-16 pt-6 md:px-8">
-            <header>
-        <h1 className="text-2xl mb-4 text-gray-900 font-semibold tracking-wide">HISTORIAL</h1>
+      <header>
+        <h1 className="mb-4 text-2xl font-semibold tracking-wide text-gray-900">
+          HISTORIAL
+        </h1>
       </header>
+
       {/* MÉTRICAS */}
       <section
         className="grid grid-cols-1 gap-6 rounded-2xl p-6 shadow-sm md:grid-cols-[1.2fr,1fr]"
-        style={{ backgroundColor: GRIS, border: `1px solid ${AZUL}1A` }} // 1A ~ 10% alpha
+        style={{ backgroundColor: GRIS, border: `1px solid ${AZUL}1A` }}
       >
         <div className="space-y-4">
-          <h2
-            className="text-xl font-semibold tracking-tight"
-            style={{ color: AZUL }}
-          >
+          <h2 className="text-xl font-semibold tracking-tight" style={{ color: AZUL }}>
             {title} :
           </h2>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <MetricItem
-              label="Participaciones Totales"
-              value={`${metrics.totalParticipaciones} Cotizaciones`}
-            />
-            <MetricItem
-              label="% De Respuesta A Tiempo"
-              value={`${metrics.pctRespuestaATiempo}%`}
-            />
-            <MetricItem
-              label="% De Aceptación"
-              value={`${metrics.pctAceptacion}%`}
-            />
-            <MetricItem
-              label="Promedio De Calificación"
-              value={`${metrics.promedioCalificacion} Estrellas`}
-            />
-            <MetricItem
-              label="Tiempo Promedio De Entrega"
-              value={`${metrics.tiempoPromedioEntregaDias} Días`}
-            />
+            <MetricItem label="Participaciones Totales" value={`${metrics.totalParticipaciones} Cotizaciones`} />
+            <MetricItem label="% De Respuesta A Tiempo" value={`${metrics.pctRespuestaATiempo}%`} />
+            <MetricItem label="% De Aceptación" value={`${metrics.pctAceptacion}%`} />
+            <MetricItem label="Promedio De Calificación" value={`${metrics.promedioCalificacion} Estrellas`} />
+            <MetricItem label="Tiempo Promedio De Entrega" value={`${metrics.tiempoPromedioEntregaDias} Días`} />
           </div>
         </div>
 
@@ -91,76 +116,64 @@ export default function FeedbackClient({
 
       {/* HISTORIAL */}
       <section className="mt-10">
-        <h3
-          className="mb-3 text-lg font-semibold tracking-tight"
-          style={{ color: AZUL }}
-        >
+        <h3 className="mb-3 text-lg font-semibold tracking-tight" style={{ color: AZUL }}>
           HISTORIAL DE FEEDBACK
         </h3>
 
-        <div
-          className="overflow-x-auto rounded-xl"
-          style={{ border: `1px solid ${AZUL}33` }} // 20% alpha
-        >
-          <table
-            className="min-w-full text-sm"
-            style={{ color: AZUL, borderColor: `${AZUL}33` }}
-          >
+        <div className="overflow-x-auto rounded-xl" style={{ border: `1px solid ${AZUL}33` }}>
+          <table className="min-w-full text-sm" style={{ color: AZUL, borderColor: `${AZUL}33` }}>
             <thead style={{ backgroundColor: `${AMARILLO}33` }}>
               <tr>
                 <Th>Fecha</Th>
                 <Th>Proyecto / Solicitud</Th>
                 <Th>Rol / Acción</Th>
                 <Th>Resultado</Th>
-                <Th>Comentario (opcional)</Th>
+                <Th>Comentario</Th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.id}
-                  className="transition-colors"
-                  style={{
-                    borderTop: `1px solid ${AZUL}1A`,
-                  }}
-                >
-                  <Td>
-                    {format(new Date(r.fecha), "dd/MM/yyyy", { locale: es })}
-                  </Td>
-                  <Td>{r.proyecto}</Td>
-                  <Td>{r.accion}</Td>
-                  <Td>
-                    <span
-                      className={[
-                        "rounded-full px-2 py-0.5 text-xs",
-                        badgeClass(r.resultado),
-                      ].join(" ")}
-                    >
-                      {r.resultado}
-                    </span>
-                  </Td>
-                  <Td>
-                    <div className="max-w-[36ch] truncate">
-                      {r.comentario || "-"}
-                    </div>
-                    {r.sugerencia ? (
-                      <div
-                        className="mt-1 text-xs italic"
-                        style={{ opacity: 0.8 }}
+              {rows.map((r) => {
+                const proyectoLimpio = clean(r.proyecto);
+                const accionLimpia = clean(r.accion);
+                const resultadoLimpio = clean(r.resultado);
+
+                return (
+                  <tr
+                    key={r.id}
+                    className="transition-colors"
+                    style={{ borderTop: `1px solid ${AZUL}1A` }}
+                  >
+                    <Td>{format(new Date(r.fecha), "dd/MM/yyyy", { locale: es })}</Td>
+
+                    {/* Proyecto = Descripción - Código (derivado del comentario o fallback a proyecto limpio) */}
+                    <Td className="font-medium text-slate-700">
+                      {extractDescAndCode(r.comentario, proyectoLimpio)}
+                    </Td>
+
+                    <Td className="text-slate-600">{accionLimpia}</Td>
+
+                    <Td>
+                      <span
+                        className={[
+                          "rounded-full px-2 py-0.5 text-xs",
+                          badgeClass(resultadoLimpio),
+                        ].join(" ")}
                       >
-                        Sugerencia: {r.sugerencia}
-                      </div>
-                    ) : null}
-                  </Td>
-                </tr>
-              ))}
+                        {resultadoLimpio}
+                      </span>
+                    </Td>
+
+                    {/* Comentario tal cual llega; completo por defecto, con opción de colapsar */}
+                    <Td className="text-slate-700">
+                      <CommentCell text={r.comentario} sugerencia={r.sugerencia} />
+                    </Td>
+                  </tr>
+                );
+              })}
+
               {rows.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="p-6 text-center"
-                    style={{ opacity: 0.7 }}
-                  >
+                  <td colSpan={5} className="p-6 text-center" style={{ opacity: 0.7 }}>
                     Aún no hay participaciones registradas para tu cuenta.
                   </td>
                 </tr>
@@ -173,11 +186,7 @@ export default function FeedbackClient({
         {suggestions.length > 0 && (
           <div
             className="mt-6 rounded-xl p-4 text-sm"
-            style={{
-              backgroundColor: GRIS,
-              border: `1px solid ${AZUL}33`,
-              color: AZUL,
-            }}
+            style={{ backgroundColor: GRIS, border: `1px solid ${AZUL}33`, color: AZUL }}
           >
             <p className="mb-2 font-medium">Sugerencias recientes (desde n8n):</p>
             <ul className="list-disc space-y-1 pl-5">
@@ -202,10 +211,7 @@ function MetricItem({ label, value }: { label: string; value: string }) {
   return (
     <div
       className="rounded-xl p-4"
-      style={{
-        backgroundColor: "white",
-        border: `1px solid ${AZUL}33`,
-      }}
+      style={{ backgroundColor: "white", border: `1px solid ${AZUL}33` }}
     >
       <div className="text-[13px]" style={{ color: `${AZUL}B3` }}>
         {label}
@@ -220,32 +226,20 @@ function MetricItem({ label, value }: { label: string; value: string }) {
 function Th({ children }: { children: React.ReactNode }) {
   const AZUL = "#00152F";
   return (
-    <th
-      className="px-4 py-3 text-left text-xs font-semibold uppercase"
-      style={{ color: AZUL }}
-    >
+    <th className="px-4 py-3 text-left text-xs font-semibold uppercase" style={{ color: AZUL }}>
       {children}
     </th>
   );
 }
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-3 align-top">{children}</td>;
+function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <td className={`px-4 py-3 align-top ${className}`}>{children}</td>;
 }
 
 function badgeClass(resultado?: string) {
   const r = (resultado || "").toLowerCase();
-  // Aceptado → verde claro
-  if (r.includes("acept"))
-    return "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300";
-  // No seleccionada → usa tu amarillo de marca
-  if (r.includes("no seleccion"))
-    return "bg-[#FFBD00]/20 text-[#00152F] ring-1 ring-[#FFBD00]/50";
-  // En evaluación → celeste
-  if (r.includes("evalu"))
-    return "bg-sky-100 text-sky-700 ring-1 ring-sky-300";
-  // Rechazado
-  if (r.includes("rechaz"))
-    return "bg-rose-100 text-rose-700 ring-1 ring-rose-300";
-  // Neutro
+  if (r.includes("acept")) return "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300";
+  if (r.includes("no seleccion")) return "bg-[#FFBD00]/20 text-[#00152F] ring-1 ring-[#FFBD00]/50";
+  if (r.includes("evalu")) return "bg-sky-100 text-sky-700 ring-1 ring-sky-300";
+  if (r.includes("rechaz")) return "bg-rose-100 text-rose-700 ring-1 ring-rose-300";
   return "bg-[#efefef] text-[#00152F]/70 ring-1 ring-[#00152F]/20";
 }
