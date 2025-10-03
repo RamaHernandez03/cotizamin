@@ -1,9 +1,14 @@
-// app/dashboard/lab/quote/actions.ts
 "use server";
 
 import prisma from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+
+/** =========================
+ * Helpers compartidos
+ * ========================= */
 
 /** Resuelve una base URL confiable para fetch interno */
 function getBaseUrl() {
@@ -49,6 +54,28 @@ async function triggerWebhookForProvider(params: {
   return j2;
 }
 
+/** Garantiza que el "admin" exista como Cliente (para poder participar en chat). */
+async function ensureAdminCliente(email: string, nombre?: string | null) {
+  const found = await prisma.cliente.findFirst({ where: { email } });
+  if (found) return found.id_cliente;
+
+  const created = await prisma.cliente.create({
+    data: {
+      nombre: nombre || email.split("@")[0],
+      email,
+    },
+    select: { id_cliente: true },
+  });
+  return created.id_cliente;
+}
+
+/** =========================
+ * Actions
+ * ========================= */
+
+/**
+ * Acción MASIVA: notificar a los proveedores listados (crear feedback)
+ */
 export async function notifyFromQuery(formData: FormData) {
   const q = sanitize(formData.get("q"));
   const marca = sanitize(formData.get("marca"));
@@ -123,4 +150,159 @@ export async function notifyFromQuery(formData: FormData) {
       material
     )}&limit=${limit}`
   );
+}
+
+/**
+ * Acción POR FILA: adjudicar al ganador e iniciar el chat 1–a–1
+ * Versión tolerante: si faltan tablas de chat no rompe; deja la participación y redirige a Feedback.
+ */
+export async function awardAndOpenChat(formData: FormData) {
+  const session = await getServerSession(authOptions);
+  if (!session) redirect("/login");
+
+  const userEmail = String((session.user as any)?.email || "");
+  const userName = String((session.user as any)?.name || "") || null;
+  if (!userEmail) throw new Error("Admin sin email en sesión");
+
+  // Campos que mandamos desde la tabla (por fila)
+  const proveedor_id = String(formData.get("proveedor_id") || "");
+  const q = String(formData.get("q") || "");
+  const id_producto = String(formData.get("id_producto") || "");
+  const codigo = String(formData.get("codigo_interno") || "");
+  const descripcion = String(formData.get("descripcion") || "");
+  const precio = Number(formData.get("precio_actual") || 0);
+
+  if (!proveedor_id || !q) throw new Error("Bad request");
+
+  // Creamos/aseguramos Cliente "admin"
+  const adminClienteId = await ensureAdminCliente(userEmail, userName);
+
+  const proyectoName = `Adjudicación: ${q}`;
+  const now = new Date();
+
+  // 1) asegurar participación ACEPTADA (sin depender del chat)
+  const participation = await prisma.cotizacionParticipacion.upsert({
+    where: {
+      id: await (async () => {
+        const prev = await prisma.cotizacionParticipacion.findFirst({
+          where: {
+            proveedor_id,
+            proyecto: proyectoName,
+            resultado: { in: ["Aceptado", "Cotización seleccionada"] },
+          },
+          select: { id: true },
+        });
+        if (prev) return prev.id;
+        const created = await prisma.cotizacionParticipacion.create({
+          data: {
+            proveedor_id,
+            fecha: now,
+            proyecto: proyectoName,
+            accion: "Adjudicación",
+            resultado: "Aceptado",
+            comentario: `Producto: ${descripcion || q} • Código: ${codigo}`,
+            sugerencia: null,
+          },
+          select: { id: true },
+        });
+        return created.id;
+      })(),
+    },
+    update: {
+      fecha: now,
+      accion: "Adjudicación",
+      resultado: "Aceptado",
+      comentario: `Producto: ${descripcion || q} • Código: ${codigo}`,
+    },
+    create: {
+      proveedor_id,
+      fecha: now,
+      proyecto: proyectoName,
+      accion: "Adjudicación",
+      resultado: "Aceptado",
+      comentario: `Producto: ${descripcion || q} • Código: ${codigo}`,
+    },
+    select: { id: true },
+  });
+
+  // 2) intentar chat sólo si existen las tablas
+  let conversationId: string | null = null;
+  try {
+    const [{ exists }] = await prisma.$queryRawUnsafe<
+      Array<{ exists: boolean }>
+    >(`SELECT to_regclass('public."Conversation"') IS NOT NULL AS exists`);
+    if (!exists) throw new Error("Chat tables missing");
+
+    const result = await prisma.$transaction(async (tx) => {
+      let conversation = await tx.conversation.findFirst({
+        where: { participationId: participation.id },
+        select: { id: true },
+      });
+
+      if (!conversation) {
+        conversation = await tx.conversation.create({
+          data: {
+            participationId: participation.id,
+            participants: {
+              create: [
+                { userId: proveedor_id }, // proveedor ganador
+                { userId: adminClienteId }, // admin/operador
+              ],
+            },
+          },
+          select: { id: true },
+        });
+      } else {
+        await tx.conversationParticipant.createMany({
+          data: [
+            { conversationId: conversation.id, userId: proveedor_id },
+            { conversationId: conversation.id, userId: adminClienteId },
+          ],
+          skipDuplicates: true,
+        });
+      }
+
+      await tx.message.create({
+        data: {
+          conversationId: conversation.id,
+          senderId: adminClienteId,
+          body: [
+            `Hola! Esta cotización fue *seleccionada*.`,
+            ``,
+            `**Detalle**`,
+            `• Producto: ${descripcion || q}`,
+            `• Código: ${codigo || "N/D"}`,
+            `• Precio de referencia: ${
+              Number.isFinite(precio)
+                ? `$${precio.toLocaleString("es-AR")}`
+                : "—"
+            }`,
+            ``,
+            `Coordinemos entrega/condiciones por este chat. 🙌`,
+          ].join("\n"),
+        },
+      });
+
+      return { conversationId: conversation.id };
+    });
+
+    conversationId = result.conversationId;
+  } catch (e) {
+    console.warn(
+      "[awardAndOpenChat] Chat deshabilitado (faltan tablas). Sigo sin chat.",
+      e
+    );
+  }
+
+  // refrescamos vistas relacionadas
+  revalidatePath("/dashboard/feedback");
+  revalidatePath("/dashboard/sales");
+  revalidatePath("/dashboard/messages");
+
+  // redirigimos
+  if (conversationId) {
+    redirect(`/dashboard/messages/${conversationId}`);
+  } else {
+    redirect(`/dashboard/feedback?adjudicacion=ok`);
+  }
 }

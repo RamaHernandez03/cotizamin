@@ -4,7 +4,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import prisma from "@/lib/prisma";
 import { compare } from "bcryptjs";
-import { NextAuthOptions } from "next-auth";
+import { NextAuthOptions, getServerSession } from "next-auth"; 
 import { JWT } from "next-auth/jwt";
 import { Session } from "next-auth";
 
@@ -174,3 +174,33 @@ async signIn({ user, account }) {
 
   secret: process.env.NEXTAUTH_SECRET,
 };
+
+export type SessionCliente = {
+  id: string;
+  email: string | null;
+  nombre: string | null;
+  ruc: string | null;
+  telefono: string | null;
+  ruc_locked: boolean;
+  email_verificado: string | null; // ISO string o null
+};
+
+export async function getSessionUser(): Promise<SessionCliente> {
+  const session = await getServerSession(authOptions);
+  const u = session?.user as any;
+
+  if (!u?.id) {
+    // 401 explícito para API Routes (lo podés cambiar por return null si preferís)
+    throw new Error("Not authenticated");
+  }
+
+  return {
+    id: u.id as string,
+    email: session?.user?.email ?? null,
+    nombre: u.nombre ?? null,
+    ruc: u.ruc ?? null,
+    telefono: u.telefono ?? null,
+    ruc_locked: Boolean(u.ruc_locked),
+    email_verificado: (u.email_verificado as string | null) ?? null,
+  };
+}

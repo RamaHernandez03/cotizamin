@@ -1,9 +1,8 @@
-// app/dashboard/lab/quote/page.tsx
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { redirect } from "next/navigation";
-import { notifyFromQuery } from "./actions";
+import { notifyFromQuery, awardAndOpenChat } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -81,7 +80,7 @@ type SearchParams = {
 export default async function LabQuotePage({
   searchParams,
 }: {
-  searchParams: SearchParams;
+  searchParams: Promise<SearchParams>;
 }) {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
@@ -92,7 +91,11 @@ export default async function LabQuotePage({
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
   const userEmail = (session.user as any)?.email?.toLowerCase() ?? "";
-  const userId = (session.user as any)?.id || (session.user as any)?.userId || (session.user as any)?.id_cliente || null;
+  const userId =
+    (session.user as any)?.id ||
+    (session.user as any)?.userId ||
+    (session.user as any)?.id_cliente ||
+    null;
   const isAllowed = allowed.length > 0 ? allowed.includes(userEmail) : true;
   if (!isAllowed) {
     return (
@@ -117,11 +120,15 @@ export default async function LabQuotePage({
   }
 
   // ---------- BÚSQUEDA ----------
-  const q = (searchParams.q || "").trim();
-  const marca = (searchParams.marca || "").trim();
-  const modelo = (searchParams.modelo || "").trim();
-  const material = (searchParams.material || "").trim();
-  const limit = Math.min(Math.max(parseInt(searchParams.limit || "10", 10) || 10, 1), 50);
+  const sp = await searchParams; // 👈 Next 15: hay que await
+  const q = (sp.q || "").trim();
+  const marca = (sp.marca || "").trim();
+  const modelo = (sp.modelo || "").trim();
+  const material = (sp.material || "").trim();
+  const limit = Math.min(
+    Math.max(parseInt(sp.limit || "10", 10) || 10, 1),
+    50
+  );
 
   let results:
     | Array<{
@@ -185,13 +192,21 @@ export default async function LabQuotePage({
 
     // 4) nombre proveedor si existe cliente
     const providerIds = top.map((t) => t.proveedor_id);
-    let nombres = new Map<string, { nombre?: string | null; email?: string | null }>();
+    const nombres = new Map<
+      string,
+      { nombre?: string | null; email?: string | null }
+    >();
     try {
       const cli = await prisma.cliente.findMany({
         where: { id_cliente: { in: providerIds } },
         select: { id_cliente: true, nombre: true, email: true },
       });
-      cli.forEach((c) => nombres.set(c.id_cliente, { nombre: c.nombre, email: (c as any).email || null }));
+      cli.forEach((c) =>
+        nombres.set(c.id_cliente, {
+          nombre: c.nombre,
+          email: (c as any).email || null,
+        })
+      );
     } catch {}
 
     results = top.map((t, i) => ({
@@ -213,7 +228,10 @@ export default async function LabQuotePage({
       data: {
         user_email: userEmail || null,
         user_id: userId ? String(userId) : null,
-        q, marca: marca || null, modelo: modelo || null, material: material || null,
+        q,
+        marca: marca || null,
+        modelo: modelo || null,
+        material: material || null,
         key_norm: keyNorm,
       },
     });
@@ -226,30 +244,41 @@ export default async function LabQuotePage({
 
     if (canAlert && providerCountForKey > 0) {
       // Notificamos a TODOS los proveedores que cumplieron los filtros (no sólo el top)
-      const proveedoresTodos = Array.from(byProveedor.values()).map(p => p.proveedor_id);
+      const proveedoresTodos = Array.from(byProveedor.values()).map(
+        (p) => p.proveedor_id
+      );
       const uniqueProviders = Array.from(new Set(proveedoresTodos));
 
-      const detalleProducto = [q, marca && `Marca ${marca}`, modelo && `Modelo ${modelo}`, material && `Material ${material}`]
+      const detalleProducto = [
+        q,
+        marca && `Marca ${marca}`,
+        modelo && `Modelo ${modelo}`,
+        material && `Material ${material}`,
+      ]
         .filter(Boolean)
         .join(" · ");
 
       await prisma.cotizacionParticipacion.createMany({
-        data: uniqueProviders.map(pid => ({
+        data: uniqueProviders.map((pid) => ({
           proveedor_id: pid,
           fecha: new Date(),
           proyecto: `Alerta demanda: ${keyNorm}`,
           accion: "Demanda alta, oferta limitada",
-          resultado: `Hubo más de ${ALERT_MIN_SEARCHES} búsquedas recientes de "${q}" y sólo ${Math.min(providerCountForKey, 3)} proveedor(es) lo ofrecen.`,
+          resultado: `Hubo más de ${ALERT_MIN_SEARCHES} búsquedas recientes de "${q}" y sólo ${Math.min(
+            providerCountForKey,
+            3
+          )} proveedor(es) lo ofrecen.`,
           comentario: `Detalle: ${detalleProducto}. Ventana ${ALERT_WINDOW_DAYS} días. Usuarios distintos ≥ ${ALERT_MIN_DISTINCT_USERS}.`,
-          sugerencia: "Aprovechá la demanda: verificá stock/precio/alta del producto para destacar.",
+          sugerencia:
+            "Aprovechá la demanda: verificá stock/precio/alta del producto para destacar.",
         })),
-        skipDuplicates: true, // por si el mismo proveedor entra dos veces
+        skipDuplicates: true,
       });
     }
     /* =================== FIN NUEVO: LOG + ALERTA ==================== */
   }
 
-  const sent = searchParams.sent === "1";
+  const sent = sp.sent === "1";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 md:px-8">
@@ -263,21 +292,45 @@ export default async function LabQuotePage({
         <p className="mt-1 text-sm" style={{ color: `${AZUL}B3` }}>
           Buscá un producto para ver el <strong>Top 10</strong> de proveedores
           por mejor precio. Luego podés notificar esa participación a los
-          proveedores para que se refleje en su pestaña <em>Feedback</em>.
+          proveedores para que se refleje en su pestaña <em>Feedback</em> o
+          directamente adjudicar a un ganador e iniciar un chat.
         </p>
 
         {/* FORM BÚSQUEDA (GET) */}
         <form method="get" className="mt-6 grid gap-4 md:grid-cols-5">
-          <Input name="q" label="Palabra clave (obligatorio)" defaultValue={q} required placeholder="Ej: Filtro 450mm" className="md:col-span-2" />
+          <Input
+            name="q"
+            label="Palabra clave (obligatorio)"
+            defaultValue={q}
+            required
+            placeholder="Ej: Filtro 450mm"
+            className="md:col-span-2"
+          />
           <Input name="marca" label="Marca (opcional)" defaultValue={marca} />
           <Input name="modelo" label="Modelo (opcional)" defaultValue={modelo} />
-          <Input name="material" label="Material (opcional)" defaultValue={material} />
+          <Input
+            name="material"
+            label="Material (opcional)"
+            defaultValue={material}
+          />
           <div className="flex items-end gap-2 md:col-span-5">
-            <input type="number" name="limit" min={1} max={50} defaultValue={limit} className="w-24 rounded-lg border bg-white px-3 py-2 outline-none" style={{ borderColor: "#00152F33", color: AZUL }} />
+            <input
+              type="number"
+              name="limit"
+              min={1}
+              max={50}
+              defaultValue={limit}
+              className="w-24 rounded-lg border bg-white px-3 py-2 outline-none"
+              style={{ borderColor: "#00152F33", color: AZUL }}
+            />
             <button
               type="submit"
               className="rounded-xl px-4 py-2 font-semibold"
-              style={{ backgroundColor: AMARILLO, color: AZUL, border: `1px solid ${AZUL}26` }}
+              style={{
+                backgroundColor: AMARILLO,
+                color: AZUL,
+                border: `1px solid ${AZUL}26`,
+              }}
             >
               Buscar
             </button>
@@ -286,7 +339,14 @@ export default async function LabQuotePage({
 
         {/* AVISO EXITO */}
         {sent && (
-          <div className="mt-4 rounded-lg px-3 py-2 text-sm" style={{ background: "#dcfce7", color: "#065f46", border: "1px solid #bbf7d0" }}>
+          <div
+            className="mt-4 rounded-lg px-3 py-2 text-sm"
+            style={{
+              background: "#dcfce7",
+              color: "#065f46",
+              border: "1px solid #bbf7d0",
+            }}
+          >
             Notificaciones creadas correctamente para los proveedores.
           </div>
         )}
@@ -299,31 +359,51 @@ export default async function LabQuotePage({
             </h2>
 
             {results.length === 0 ? (
-              <div className="mt-3 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: `${AZUL}33`, color: `${AZUL}B3`, background: "white" }}>
+              <div
+                className="mt-3 rounded-lg border px-3 py-2 text-sm"
+                style={{
+                  borderColor: `${AZUL}33`,
+                  color: `${AZUL}B3`,
+                  background: "white",
+                }}
+              >
                 No se encontraron coincidencias con esos filtros.
               </div>
             ) : (
               <>
-                <div className="mt-3 overflow-x-auto rounded-xl" style={{ border: `1px solid ${AZUL}33` }}>
+                <div
+                  className="mt-3 overflow-x-auto rounded-xl"
+                  style={{ border: `1px solid ${AZUL}33` }}
+                >
                   <table className="min-w-full text-sm" style={{ color: AZUL }}>
                     <thead style={{ backgroundColor: `${AMARILLO}33` }}>
                       <tr>
-                        <Th>#</Th>
-                        <Th>Proveedor</Th>
-                        <Th>Precio</Th>
-                        <Th>Descripción</Th>
-                        <Th>Marca</Th>
-                        <Th>Modelo</Th>
-                        <Th>Material</Th>
-                        <Th>Codigo</Th>
+                        {[
+                          "#",
+                          "Proveedor",
+                          "Precio",
+                          "Descripción",
+                          "Marca",
+                          "Modelo",
+                          "Material",
+                          "Código",
+                          "Acciones",
+                        ].map((h) => (
+                          <Th key={h}>{h}</Th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {results.map((r) => (
-                        <tr key={r.proveedor_id} style={{ borderTop: `1px solid ${AZUL}1A` }}>
+                        <tr
+                          key={r.proveedor_id}
+                          style={{ borderTop: `1px solid ${AZUL}1A` }}
+                        >
                           <Td>{r.rank}</Td>
                           <Td>
-                            {r.proveedor_nombre ? r.proveedor_nombre : r.proveedor_id}
+                            {r.proveedor_nombre
+                              ? r.proveedor_nombre
+                              : r.proveedor_id}
                           </Td>
                           <Td>${r.precio_actual.toLocaleString("es-AR")}</Td>
                           <Td>{r.descripcion}</Td>
@@ -331,14 +411,62 @@ export default async function LabQuotePage({
                           <Td>{r.modelo ?? "-"}</Td>
                           <Td>{r.material ?? "-"}</Td>
                           <Td>{r.codigo_interno ?? "-"}</Td>
+                          <Td>
+                            <div className="flex flex-col gap-2">
+                              {/* Adjudicar + iniciar chat con el ganador */}
+                              <form action={awardAndOpenChat}>
+                                <input
+                                  type="hidden"
+                                  name="proveedor_id"
+                                  value={r.proveedor_id}
+                                />
+                                <input type="hidden" name="q" value={q} />
+                                <input
+                                  type="hidden"
+                                  name="id_producto"
+                                  value={r.id_producto}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="codigo_interno"
+                                  value={r.codigo_interno ?? ""}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="descripcion"
+                                  value={r.descripcion}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="precio_actual"
+                                  value={String(r.precio_actual)}
+                                />
+                                <button
+                                  type="submit"
+                                  className="rounded-lg px-3 py-1 text-xs font-semibold"
+                                  style={{
+                                    backgroundColor: AMARILLO,
+                                    color: AZUL,
+                                    border: `1px solid ${AZUL}26`,
+                                  }}
+                                  title="Adjudicar e iniciar chat"
+                                >
+                                  Iniciar chat con ganador
+                                </button>
+                              </form>
+                            </div>
+                          </Td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
 
-                {/* FORM NOTIFICAR (POST con Server Action) */}
-                <form action={notifyFromQuery} className="mt-4 flex items-center gap-3">
+                {/* FORM NOTIFICAR (POST con Server Action) masivo */}
+                <form
+                  action={notifyFromQuery}
+                  className="mt-4 flex items-center gap-3"
+                >
                   {/* reenviamos los filtros a la acción para recalcular server-side */}
                   <input type="hidden" name="q" value={q} />
                   <input type="hidden" name="marca" value={marca} />
@@ -348,12 +476,17 @@ export default async function LabQuotePage({
                   <button
                     type="submit"
                     className="rounded-xl px-4 py-2 font-semibold"
-                    style={{ backgroundColor: AMARILLO, color: AZUL, border: `1px solid ${AZUL}26` }}
+                    style={{
+                      backgroundColor: AMARILLO,
+                      color: AZUL,
+                      border: `1px solid ${AZUL}26`,
+                    }}
                   >
                     Notificar proveedores (crear feedback)
                   </button>
                   <span className="text-xs" style={{ color: `${AZUL}99` }}>
-                    Se crearán registros de participación para los {Math.min(results.length, limit)} proveedores listados.
+                    Se crearán registros de participación para los{" "}
+                    {Math.min(results.length, limit)} proveedores listados.
                   </span>
                 </form>
               </>
@@ -382,7 +515,10 @@ function Input({
 }) {
   return (
     <label className={className ?? ""}>
-      <span className="mb-1 block text-sm font-medium" style={{ color: "#00152F" }}>
+      <span
+        className="mb-1 block text-sm font-medium"
+        style={{ color: "#00152F" }}
+      >
         {label} {required ? "*" : ""}
       </span>
       <input
@@ -399,7 +535,10 @@ function Input({
 
 function Th({ children }: { children: React.ReactNode }) {
   return (
-    <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: "#00152F" }}>
+    <th
+      className="px-3 py-2 text-left text-xs font-semibold uppercase"
+      style={{ color: "#00152F" }}
+    >
       {children}
     </th>
   );

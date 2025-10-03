@@ -10,48 +10,49 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// prisma/schema.prisma (solo el modelo Cliente)
 model Cliente {
-  id_cliente      String   @id @default(cuid())
-  nombre          String
-  ruc             String?  @unique
-  email           String   @unique
-  password        String?
-  fecha_registro  DateTime @default(now())
-
-  telefono        String?
-  direccion       String?
-  pais            String?
-  email_contacto  String?
-  certificaciones String?
-
-  ruc_locked      Boolean  @default(false)
+  id_cliente       String    @id @default(cuid())
+  nombre           String
+  ruc              String?   @unique
+  email            String    @unique
+  password         String?
+  fecha_registro   DateTime  @default(now())
+  telefono         String?
+  direccion        String?
+  pais             String?
+  email_contacto   String?
+  certificaciones  String?
+  ruc_locked       Boolean   @default(false)
   email_verificado DateTime?
 
-  productos       Producto[]
+  productos Producto[]
+
+  // 👇 BACK-RELATIONS PARA CHAT
+  chatParticipants ConversationParticipant[]
+  messagesSent     Message[]
 }
 
 model Producto {
-  id_producto          String   @id @default(uuid())
-  proveedor_id         String
+  id_producto  String @id @default(uuid())
+  proveedor_id String
 
   // Relación con Cliente
-  cliente              Cliente  @relation(fields: [proveedor_id], references: [id_cliente], onDelete: Restrict, onUpdate: Cascade)
+  cliente Cliente @relation(fields: [proveedor_id], references: [id_cliente], onDelete: Restrict, onUpdate: Cascade)
 
-  codigo_interno       String
-  descripcion          String
-  marca                String?
-  modelo               String?
-  material             String?
-  norma_tecnica        String?
-  unidad               String?
-  stock_actual         Int      @default(0)
-  precio_actual        Float    @default(0)
-  moneda               String   @default("USD")
-  tiempo_entrega       String?
-  ubicacion_stock      String?
-  estado               String   @default("Activo")
-  fecha_actualizacion  DateTime @default(now())
+  codigo_interno      String
+  descripcion         String
+  marca               String?
+  modelo              String?
+  material            String?
+  norma_tecnica       String?
+  unidad              String?
+  stock_actual        Int      @default(0)
+  precio_actual       Float    @default(0)
+  moneda              String   @default("USD")
+  tiempo_entrega      String?
+  ubicacion_stock     String?
+  estado              String   @default("Activo")
+  fecha_actualizacion DateTime @default(now())
 
   @@unique([codigo_interno, proveedor_id], name: "codigo_interno_proveedor_id")
   @@index([proveedor_id, fecha_actualizacion], name: "idx_proveedor_fecha")
@@ -73,20 +74,21 @@ model RecommendationBatch {
 }
 
 model RecommendationItem {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   batchId   String
-  tipo      String   // "precio" | "stock" | "perfil"
+  tipo      String // "precio" | "stock" | "perfil"
   mensaje   String
   producto  String?
-  prioridad String   // "alta" | "media" | "baja"
+  prioridad String // "alta" | "media" | "baja"
 
-  batch     RecommendationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  batch RecommendationBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@index([batchId])
 }
 
 model CotizacionParticipacion {
-  id           String   @id @default(uuid())
+  // Antes: id String @id @default(uuid())
+  id           String   @id @default(uuid()) @db.Uuid // 👈 String (TEXT). Prisma generará el id en el cliente
   proveedor_id String
   fecha        DateTime @default(now())
   proyecto     String
@@ -95,9 +97,10 @@ model CotizacionParticipacion {
   comentario   String?
   sugerencia   String?
 
-  @@index([proveedor_id, fecha], name: "cotip_part_idx_prov_fecha") // NUEVO
-}
+  conversations Conversation[] @relation("PartConv")
 
+  @@index([proveedor_id, fecha], name: "cotip_part_idx_prov_fecha")
+}
 
 model ProductSearchLog {
   id         String   @id @default(cuid())
@@ -107,26 +110,28 @@ model ProductSearchLog {
   marca      String?
   modelo     String?
   material   String?
-  key_norm   String   // hash/llave normalizada de los filtros
+  key_norm   String // hash/llave normalizada de los filtros
   createdAt  DateTime @default(now())
 
   @@index([key_norm, createdAt], name: "idx_key_time")
 }
 
-/* ===========================
-   MODELOS REQUERIDOS POR NEXTAUTH
-   (para Google OAuth y sesiones)
-   =========================== */
+/**
+ * ===========================
+ * MODELOS REQUERIDOS POR NEXTAUTH
+ * (para Google OAuth y sesiones)
+ * ===========================
+ */
 
 model User {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   name          String?
-  email         String?  @unique
+  email         String?   @unique
   emailVerified DateTime?
   image         String?
 
-  accounts      Account[]
-  sessions      Session[]
+  accounts Account[]
+  sessions Session[]
 }
 
 model Account {
@@ -135,12 +140,12 @@ model Account {
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String?  @db.Text
-  access_token      String?  @db.Text
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String?  @db.Text
+  id_token          String? @db.Text
   session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -167,16 +172,16 @@ model VerificationToken {
 
 /// --- NUEVO: Métricas diarias “cocinadas” para /dashboard/feedback
 model QuoteMetricsDaily {
-  id                        String   @id @default(cuid())
-  proveedor_id              String
-  fecha                     DateTime // trunc YYYY-MM-DD (usa CURRENT_DATE en n8n)
-  total_participaciones     Int
-  pct_respuesta_tiempo      Int
-  pct_aceptacion            Int
-  promedio_calificacion     Float     @default(0)
-  tiempo_prom_entrega_dias  Int       @default(0)
-  pendientes_evaluacion     Int       @default(0)
-  createdAt                 DateTime  @default(now())
+  id                       String   @id @default(cuid())
+  proveedor_id             String
+  fecha                    DateTime // trunc YYYY-MM-DD (usa CURRENT_DATE en n8n)
+  total_participaciones    Int
+  pct_respuesta_tiempo     Int
+  pct_aceptacion           Int
+  promedio_calificacion    Float    @default(0)
+  tiempo_prom_entrega_dias Int      @default(0)
+  pendientes_evaluacion    Int      @default(0)
+  createdAt                DateTime @default(now())
 
   @@unique([proveedor_id, fecha], name: "quote_metrics_unique")
   @@index([proveedor_id, fecha])
@@ -184,13 +189,13 @@ model QuoteMetricsDaily {
 
 /// --- NUEVO: Sugerencias textuales derivadas de reglas/LLM sobre cotizaciones
 model QuoteSuggestion {
-  id            String   @id @default(cuid())
-  proveedor_id  String
-  fecha         DateTime @default(now())
-  texto         String
-  fuente        String?  // 'rule' | 'llm' | etc.
-  ref_id        String?  // id de la participación relacionada, si aplica
-  createdAt     DateTime @default(now())
+  id           String   @id @default(cuid())
+  proveedor_id String
+  fecha        DateTime @default(now())
+  texto        String
+  fuente       String? // 'rule' | 'llm' | etc.
+  ref_id       String? // id de la participación relacionada, si aplica
+  createdAt    DateTime @default(now())
 
   @@index([proveedor_id, fecha])
 }
@@ -210,12 +215,49 @@ model DemandAlert {
 
 /// --- OPCIONAL (recomendado): tracking de jobs n8n (refresh, cron, etc.)
 model Job {
-  id         String   @id
-  tipo       String   // 'reco' | 'quotes-metrics' | 'demand' | ...
+  id         String    @id
+  tipo       String // 'reco' | 'quotes-metrics' | 'demand' | ...
   owner_id   String?
-  status     String   // 'queued' | 'running' | 'done' | 'error'
-  startedAt  DateTime @default(now())
+  status     String // 'queued' | 'running' | 'done' | 'error'
+  startedAt  DateTime  @default(now())
   finishedAt DateTime?
   error      String?
 }
 
+model Conversation {
+  id           String                    @id @default(cuid())
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  participationId String? @db.Uuid
+  participation   CotizacionParticipacion? @relation("PartConv", fields: [participationId], references: [id], onDelete: SetNull)
+
+  @@index([participationId])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  user           Cliente      @relation(fields: [userId], references: [id_cliente], onDelete: Cascade)
+  userId         String
+  createdAt      DateTime     @default(now())
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  sender         Cliente      @relation(fields: [senderId], references: [id_cliente], onDelete: SetNull)
+  senderId       String
+  body           String
+  createdAt      DateTime     @default(now())
+  readAt         DateTime?
+
+  @@index([conversationId, createdAt])
+  @@index([conversationId, readAt]) // útil para consultas de no leídos
+}

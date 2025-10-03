@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import TopNavbar from "@/components/TopNavbar";
 import DashboardMenu from "@/components/DashboardMenu";
 import NotificationsWatcher from "@/components/NotificationsWatcher";
+import GlobalChatFab from "@/components/GlobalChatFab";
 
 function WelcomeCard({ user, ruc }: { user: string; ruc: string }) {
   return (
@@ -22,6 +23,7 @@ function MenuWidget() {
       <div className="mb-4">
         <h3 className="text-sm md:text-base font-semibold text-gray-800 mb-3">MI CUENTA</h3>
       </div>
+      <GlobalChatFab />
       <DashboardMenu />
     </div>
   );
