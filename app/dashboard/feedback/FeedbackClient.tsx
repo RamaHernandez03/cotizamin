@@ -38,6 +38,25 @@ function extractDescAndCode(comentario?: string, fallbackProyecto?: string) {
 }
 const clean = (t?: string) => (t ?? "").replace(/simulada/ig, "").trim();
 
+/** Devuelve solo el párrafo final del comentario.
+ *  - Si encuentra "Producto:", muestra desde su última aparición hasta el final.
+ *  - Si no, toma el último bloque separado por saltos dobles.
+ */
+function commentBottomOnly(text?: string) {
+  const raw = (text ?? "").trim();
+  if (!raw) return raw;
+
+  const lower = raw.toLowerCase();
+  const lastProducto = lower.lastIndexOf("producto:");
+  if (lastProducto >= 0) {
+    return raw.slice(lastProducto).trim();
+  }
+
+  // Si no hay "Producto:", quedate con el último párrafo (separado por líneas en blanco)
+  const parts = raw.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : raw;
+}
+
 /** Intenta extraer "P/T" desde resultado o comentario (2/10, posición 2 de 10, puesto 2 sobre 10, etc.) */
 function extractRankShort(resultado?: string, comentario?: string) {
   const candidates = [resultado ?? "", comentario ?? ""];
@@ -76,7 +95,7 @@ function rankBadgeClass() {
 
 /** Bloque para comentario con scroll interno si supera el alto máximo */
 function CommentCell({ text, sugerencia }: { text?: string; sugerencia?: string }) {
-  const comentario = text?.trim() ?? "";
+  const comentario = commentBottomOnly(text); // ⬅️ acá
   if (!comentario) return <span className="text-slate-400">-</span>;
 
   return (
@@ -85,8 +104,8 @@ function CommentCell({ text, sugerencia }: { text?: string; sugerencia?: string 
         className={[
           "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
           "whitespace-pre-wrap break-words",
-          "overflow-y-auto pr-2",           // scroll vertical + un poco de padding para la barra
-          "max-h-40 md:max-h-56",           // alto máximo
+          "overflow-y-auto pr-2",
+          "max-h-40 md:max-h-56",
         ].join(" ")}
       >
         {comentario}
@@ -100,6 +119,7 @@ function CommentCell({ text, sugerencia }: { text?: string; sugerencia?: string 
     </div>
   );
 }
+
 
 export default function FeedbackClient({
   rows,

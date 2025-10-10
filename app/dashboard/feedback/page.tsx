@@ -17,9 +17,28 @@ const PAGE_SIZE_DEFAULT = 10;
 const MAX_BTNS = 5;
 
 /* ==================== Helpers visuales ==================== */
+
+/** Devuelve solo el párrafo final del comentario.
+ *  - Si encuentra "Producto:", muestra desde su última aparición hasta el final.
+ *  - Si no, toma el último bloque separado por saltos dobles.
+ */
+function commentBottomOnly(text?: string) {
+  const raw = (text ?? "").trim();
+  if (!raw) return raw;
+
+  const lower = raw.toLowerCase();
+  const lastProducto = lower.lastIndexOf("producto:");
+  if (lastProducto >= 0) {
+    return raw.slice(lastProducto).trim();
+  }
+
+  const parts = raw.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : raw;
+}
+
 function extractDescAndCode(comentario?: string, fallbackProyecto?: string) {
-  const c = comentario || "";
-  const mDesc = c.match(/Producto:\s*([^•]+?)(?:•|$)/i);
+  const c = commentBottomOnly(comentario) || "";
+  const mDesc = c.match(/Producto:\s*([^•\n]+?)(?:•|$)/i);
   const mCode = c.match(/Código:\s*([A-Za-z0-9._-]+)/i);
   const desc = mDesc ? mDesc[1].trim() : null;
   const code = mCode ? mCode[1].trim() : null;
@@ -302,9 +321,9 @@ export default async function HistorialPage({
   const nums = numberedPages(safePage, totalPages);
 
   const baseParams: Record<string, string | undefined> = {
-  page: String(page),
-  pageSize: String(PAGE_SIZE),
-};
+    page: String(page),
+    pageSize: String(PAGE_SIZE),
+  };
 
   return (
     <div className="min-h-screen p-4 md:p-6">
@@ -399,61 +418,65 @@ export default async function HistorialPage({
                     Resultado
                   </th>
                   <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">
-                    Comentario (opcional)
+                    Feedback
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rows.map((row, index) => (
-                  <tr
-                    key={row.id}
-                    className={`transition-colors hover:bg-slate-50/50 ${
-                      index % 2 === 0 ? "bg-white" : "bg-slate-25"
-                    }`}
-                  >
-                    {/* Fecha */}
-                    <td className="px-6 py-5 whitespace-nowrap text-sm font-medium text-slate-900">
-                      {format(new Date(row.fecha), "dd/MM/yyyy", { locale: es })}
-                    </td>
+                {rows.map((row, index) => {
+                  const comentarioLimpio = commentBottomOnly(row.comentario);
 
-                    {/* Proyecto / Solicitud = Descripción - Código */}
-                    <td className="px-6 py-5 text-sm font-medium text-slate-700">
-                      {extractDescAndCode(row.comentario, row.proyecto)}
-                    </td>
+                  return (
+                    <tr
+                      key={row.id}
+                      className={`transition-colors hover:bg-slate-50/50 ${
+                        index % 2 === 0 ? "bg-white" : "bg-slate-25"
+                      }`}
+                    >
+                      {/* Fecha */}
+                      <td className="px-6 py-5 whitespace-nowrap text-sm font-medium text-slate-900">
+                        {format(new Date(row.fecha), "dd/MM/yyyy", { locale: es })}
+                      </td>
 
-                    {/* Acción */}
-                    <td className="px-6 py-5 text-sm text-slate-600">{row.accion}</td>
+                      {/* Proyecto / Solicitud = Descripción - Código */}
+                      <td className="px-6 py-5 text-sm font-medium text-slate-700">
+                        {extractDescAndCode(row.comentario, row.proyecto)}
+                      </td>
 
-                    {/* Resultado (prioriza rank numérico) */}
-                    <td className="px-6 py-5 whitespace-nowrap">
-                      {(() => {
-                        const rankDisplay = formatRankFromRow(row);
-                        if (rankDisplay) {
-                          return <span className={rankBadgeClass()}>{rankDisplay}</span>;
-                        }
-                        return <StatusBadge resultado={row.resultado} />;
-                      })()}
-                    </td>
+                      {/* Acción */}
+                      <td className="px-6 py-5 text-sm text-slate-600">{row.accion}</td>
 
-                    {/* Comentario con scroll interno */}
-                    <td className="px-6 py-5 text-sm text-slate-700">
-                      {row.comentario ? (
-                        <div
-                          className={[
-                            "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
-                            "whitespace-pre-wrap break-words",
-                            "overflow-y-auto pr-2",
-                            "max-h-40 md:max-h-56",
-                          ].join(" ")}
-                        >
-                          {row.comentario}
-                        </div>
-                      ) : (
-                        <div className="text-slate-400">-</div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      {/* Resultado (prioriza rank numérico) */}
+                      <td className="px-6 py-5 whitespace-nowrap">
+                        {(() => {
+                          const rankDisplay = formatRankFromRow(row);
+                          if (rankDisplay) {
+                            return <span className={rankBadgeClass()}>{rankDisplay}</span>;
+                          }
+                          return <StatusBadge resultado={row.resultado} />;
+                        })()}
+                      </td>
+
+                      {/* Comentario con scroll interno (solo el párrafo final) */}
+                      <td className="px-6 py-5 text-sm text-slate-700">
+                        {comentarioLimpio ? (
+                          <div
+                            className={[
+                              "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
+                              "whitespace-pre-wrap break-words",
+                              "overflow-y-auto pr-2",
+                              "max-h-40 md:max-h-56",
+                            ].join(" ")}
+                          >
+                            {comentarioLimpio}
+                          </div>
+                        ) : (
+                          <div className="text-slate-400">-</div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
 
                 {rows.length === 0 && (
                   <tr>

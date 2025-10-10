@@ -10,7 +10,44 @@ import { authOptions } from "@/lib/auth";
  * Helpers compartidos
  * ========================= */
 
+
+async function ensureAdminCliente(email: string, nombre?: string | null) {
+  const found = await prisma.cliente.findFirst({ where: { email }, select: { id_cliente: true } });
+  if (found) return found.id_cliente;
+
+  const created = await prisma.cliente.create({
+    data: { nombre: nombre || email.split("@")[0], email },
+    select: { id_cliente: true },
+  });
+  return created.id_cliente;
+}
+
 /** Resuelve una base URL confiable para fetch interno */
+
+function normalizeN8nDataToBlocks(raw: any, q: string) {
+  if (!raw) return [];
+  // Caso 1: ya viene como array de bloques
+  if (Array.isArray(raw) && raw.every((b) => typeof b === "object" && ("resultados" in b || "results" in b))) {
+    return raw.map((b) => ({
+      query: b.query ?? b.q ?? q,
+      resultados: Array.isArray(b.resultados) ? b.resultados : (Array.isArray(b.results) ? b.results : []),
+    }));
+  }
+  // Caso 2: viene UN bloque { query, resultados[] }
+  if (typeof raw === "object" && (Array.isArray(raw.resultados) || Array.isArray(raw.results))) {
+    return [{
+      query: raw.query ?? raw.q ?? q,
+      resultados: Array.isArray(raw.resultados) ? raw.resultados : (raw.results ?? []),
+    }];
+  }
+  // Caso 3: viene array "plano" de resultados
+  if (Array.isArray(raw) && (raw.length === 0 || typeof raw[0] === "object")) {
+    return [{ query: q, resultados: raw }];
+  }
+  // Caso 4: desconocido → nada
+  return [];
+}
+
 function getBaseUrl() {
   return (
     process.env.NEXT_PUBLIC_APP_URL ||
@@ -34,7 +71,7 @@ async function triggerWebhookForProvider(params: {
 }) {
   const base = getBaseUrl();
 
-  // 1) Dispara n8n vía proxy interno
+  // 1) Disparo a n8n
   const r1 = await fetch(`${base}/api/quotes/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -42,35 +79,29 @@ async function triggerWebhookForProvider(params: {
     cache: "no-store",
   });
   if (!r1.ok) throw new Error(`refresh failed ${r1.status}`);
-  const j1 = (await r1.json()) as { ok: boolean; data?: unknown };
+  const j1 = (await r1.json()) as { ok: boolean; data?: any };
   if (!j1.ok) throw new Error("refresh not ok");
 
-  // 2) Ingesta de respuesta
+  // 🔧 Normalización acá
+  const blocks = normalizeN8nDataToBlocks(j1.data, params.q);
+  // Si no hay nada que ingerir, corto temprano para no romper
+  if (!blocks.length) return { ok: true, ingested: 0 };
+
+  // 2) Ingesta SIEMPRE como array de blocks normalizado
   const r2 = await fetch(`${base}/api/quotes/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(j1.data ?? []),
+    body: JSON.stringify(blocks),
     cache: "no-store",
   });
-  if (!r2.ok) throw new Error(`ingest failed ${r2.status}`);
+  if (!r2.ok) {
+    const txt = await r2.text().catch(() => "");
+    throw new Error(`ingest failed ${r2.status}: ${txt}`);
+  }
   const j2 = await r2.json();
   return j2;
 }
 
-/** Garantiza que el "admin" exista como Cliente (para poder participar en chat). */
-async function ensureAdminCliente(email: string, nombre?: string | null) {
-  const found = await prisma.cliente.findFirst({ where: { email } });
-  if (found) return found.id_cliente;
-
-  const created = await prisma.cliente.create({
-    data: {
-      nombre: nombre || email.split("@")[0],
-      email,
-    },
-    select: { id_cliente: true },
-  });
-  return created.id_cliente;
-}
 
 /** =========================
  * Actions
