@@ -24,14 +24,17 @@ function sanitize(v: unknown) {
   return String(v ?? "").trim();
 }
 
+/** Dispara tu flujo n8n (opcional). Mantengo firma para reuse. */
 async function triggerWebhookForProvider(params: {
   proveedor_id: string;
   q: string;
   precio_ofertado?: number | null;
+  rank?: number;
+  total?: number;
 }) {
   const base = getBaseUrl();
 
-  // 1) Dispara n8n vía nuestro proxy interno
+  // 1) Dispara n8n vía proxy interno
   const r1 = await fetch(`${base}/api/quotes/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -42,7 +45,7 @@ async function triggerWebhookForProvider(params: {
   const j1 = (await r1.json()) as { ok: boolean; data?: unknown };
   if (!j1.ok) throw new Error("refresh not ok");
 
-  // 2) Ingesta la respuesta (es el array con query/resultados)
+  // 2) Ingesta de respuesta
   const r2 = await fetch(`${base}/api/quotes/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -74,7 +77,14 @@ async function ensureAdminCliente(email: string, nombre?: string | null) {
  * ========================= */
 
 /**
- * Acción MASIVA: notificar a los proveedores listados (crear feedback)
+ * Acción MASIVA: notificar a los proveedores listados (crear/actualizar feedback)
+ * - Crea/actualiza registros en `cotizacionParticipacion` con:
+ *   proyecto = "Cotización: {q}"
+ *   accion   = "Participación"
+ *   resultado= "Posición {rank} de {total}"
+ *   rank_pos / rank_total
+ *   comentario = "Producto: … • Código: … • Precio: …"
+ * - (Opcional) dispara n8n en background (best-effort)
  */
 export async function notifyFromQuery(formData: FormData) {
   const q = sanitize(formData.get("q"));
@@ -82,10 +92,7 @@ export async function notifyFromQuery(formData: FormData) {
   const modelo = sanitize(formData.get("modelo"));
   const material = sanitize(formData.get("material"));
   const limitRaw = Number(sanitize(formData.get("limit")) || 10);
-  const limit = Math.min(
-    Math.max(Number.isFinite(limitRaw) ? limitRaw : 10, 1),
-    50
-  );
+  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 10, 1), 50);
 
   if (!q) {
     redirect(`/dashboard/lab/quote?sent=0`);
@@ -121,34 +128,95 @@ export async function notifyFromQuery(formData: FormData) {
   for (const p of productos) {
     if (!byProveedor.has(p.proveedor_id)) byProveedor.set(p.proveedor_id, p);
   }
-  const uniques = Array.from(byProveedor.values()).sort(
-    (a, b) => a.precio_actual - b.precio_actual
-  );
-  const top = uniques.slice(0, limit);
-
-  if (top.length === 0) {
-    redirect(`/dashboard/lab/quote?sent=0&q=${encodeURIComponent(q)}`);
+  const uniques = Array.from(byProveedor.values()).sort((a, b) => a.precio_actual - b.precio_actual);
+  if (uniques.length === 0) {
+    redirect(`/dashboard/lab/quote?sent=0&q=${encodeURIComponent(q)}&marca=${encodeURIComponent(marca)}&modelo=${encodeURIComponent(modelo)}&material=${encodeURIComponent(material)}&limit=${limit}`);
   }
 
-  // 3) Por cada proveedor listado → webhook n8n → ingest a historial
+  // 3) Ranking real por precio (1 = más barato)
+  const totalProveedores = uniques.length;
+  const ranked = uniques.map((p, i) => ({
+    ...p,
+    rank: i + 1,
+    total: totalProveedores,
+  }));
+
+  const proyectoName = `Cotización: ${q}`;
+  const now = new Date();
+
+  // 4) Crea/actualiza participaciones para los que se notifican (limit)
+  await prisma.$transaction(async (tx) => {
+    const list = ranked.slice(0, limit);
+
+    for (const t of list) {
+      const comentario = [
+        `Producto: ${t.descripcion || q}`,
+        `Código: ${t.codigo_interno ?? "N/D"}`,
+        Number.isFinite(t.precio_actual) ? `Precio: $${t.precio_actual.toLocaleString("es-AR")}` : null,
+      ]
+        .filter(Boolean)
+        .join(" • ");
+
+      // Si existe algo muy reciente para este proveedor y proyecto, lo actualizo
+      const prev = await tx.cotizacionParticipacion.findFirst({
+        where: {
+          proveedor_id: t.proveedor_id,
+          proyecto: proyectoName,
+          fecha: { gte: new Date(now.getTime() - 1000 * 60 * 60 * 24) }, // 24h
+        },
+        orderBy: { fecha: "desc" },
+        select: { id: true },
+      });
+
+      if (prev?.id) {
+        await tx.cotizacionParticipacion.update({
+          where: { id: prev.id },
+          data: {
+            fecha: now,
+            accion: "Participación",
+            resultado: `Posición ${t.rank} de ${t.total}`,
+            comentario,
+            rank_pos: t.rank,
+            rank_total: t.total,
+          },
+        });
+      } else {
+        await tx.cotizacionParticipacion.create({
+          data: {
+            proveedor_id: t.proveedor_id,
+            fecha: now,
+            proyecto: proyectoName,
+            accion: "Participación",
+            resultado: `Posición ${t.rank} de ${t.total}`,
+            comentario,
+            rank_pos: t.rank,
+            rank_total: t.total,
+            sugerencia: null,
+          },
+        });
+      }
+    }
+  });
+
+  // 5) (Opcional) mantener tus flujos n8n como best-effort (no bloquea)
   await Promise.allSettled(
-    top.map((t) =>
+    ranked.slice(0, limit).map((t) =>
       triggerWebhookForProvider({
         proveedor_id: t.proveedor_id,
         q,
-        precio_ofertado: t.precio_actual, // opcional, útil para IA/contexto
+        precio_ofertado: t.precio_actual,
+        rank: t.rank,
+        total: t.total,
       })
     )
   );
 
-  // 4) refrescamos feedback y volvemos a la misma pantalla con flag "sent"
+  // 6) refrescamos feedback y volvemos a la misma pantalla con flag "sent"
   revalidatePath("/dashboard/feedback");
   redirect(
     `/dashboard/lab/quote?sent=1&q=${encodeURIComponent(q)}&marca=${encodeURIComponent(
       marca
-    )}&modelo=${encodeURIComponent(modelo)}&material=${encodeURIComponent(
-      material
-    )}&limit=${limit}`
+    )}&modelo=${encodeURIComponent(modelo)}&material=${encodeURIComponent(material)}&limit=${limit}`
   );
 }
 
@@ -273,9 +341,7 @@ export async function awardAndOpenChat(formData: FormData) {
             `• Producto: ${descripcion || q}`,
             `• Código: ${codigo || "N/D"}`,
             `• Precio de referencia: ${
-              Number.isFinite(precio)
-                ? `$${precio.toLocaleString("es-AR")}`
-                : "—"
+              Number.isFinite(precio) ? `$${precio.toLocaleString("es-AR")}` : "—"
             }`,
             ``,
             `Coordinemos entrega/condiciones por este chat. 🙌`,
@@ -288,10 +354,7 @@ export async function awardAndOpenChat(formData: FormData) {
 
     conversationId = result.conversationId;
   } catch (e) {
-    console.warn(
-      "[awardAndOpenChat] Chat deshabilitado (faltan tablas). Sigo sin chat.",
-      e
-    );
+    console.warn("[awardAndOpenChat] Chat deshabilitado (faltan tablas). Sigo sin chat.", e);
   }
 
   // refrescamos vistas relacionadas

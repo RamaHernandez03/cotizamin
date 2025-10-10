@@ -7,8 +7,14 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import Image from "next/image";
 import History from "../../../public/images/history.jpeg";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
+
+const AZUL = "#00152F";
+const AMARILLO = "#FFBD00";
+const PAGE_SIZE_DEFAULT = 10;
+const MAX_BTNS = 5;
 
 /* ==================== Helpers visuales ==================== */
 function extractDescAndCode(comentario?: string, fallbackProyecto?: string) {
@@ -21,12 +27,35 @@ function extractDescAndCode(comentario?: string, fallbackProyecto?: string) {
   return fallbackProyecto || "-";
 }
 
-/** preview corto para el <summary> */
-function summarize(text?: string, max = 140) {
-  const t = (text || "").trim();
-  if (t.length <= max) return t || "-";
-  return t.slice(0, max - 1) + "…";
+function extractRankShortStrict(text?: string) {
+  const t = (text || "").toLowerCase();
+
+  // 1) "posición 2 de 10" / "puesto 3 sobre 12"
+  let m =
+    t.match(/posici(?:ó|o)n\s+(\d+)\s+(?:de|sobre)\s+(\d+)/i) ||
+    t.match(/puesto\s+(\d+)\s+(?:de|sobre)\s+(\d+)/i);
+  if (m) return `${m[1]}/${m[2]}`;
+
+  // 2) "rank 2/10", "ranking: 2/10", "probable(rank1/1)"
+  m = t.match(/rank(?:ing)?[:=]?\s*\(?\s*(\d+)\s*\/\s*(\d+)\s*\)?/i);
+  if (m) return `${m[1]}/${m[2]}`;
+
+  // 3) Cualquier "2/10" suelto evitando fechas (01/10/2025)
+  const all = [...t.matchAll(/(\d+)\s*\/\s*(\d+)/g)];
+  for (const mm of all) {
+    const after = t.slice((mm.index ?? 0) + mm[0].length);
+    const hasAnotherSlashSoon = /^\s*\/\s*\d{1,4}/.test(after);
+    if (!hasAnotherSlashSoon) return `${mm[1]}/${mm[2]}`;
+  }
+
+  return null;
 }
+
+/** Badge neutral para "P/T" */
+function rankBadgeClass() {
+  return "inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700";
+}
+
 /* ========================================================== */
 
 type FeedbackRow = {
@@ -37,6 +66,8 @@ type FeedbackRow = {
   resultado: string;
   comentario?: string;
   sugerencia?: string;
+  rank_pos?: number | null;
+  rank_total?: number | null;
 };
 
 type EventRowDB = {
@@ -47,6 +78,8 @@ type EventRowDB = {
   resultado: string | null;
   comentario: string | null;
   sugerencia: string | null;
+  rank_pos: number | null;
+  rank_total: number | null;
 };
 
 type FeedbackMetrics = {
@@ -59,19 +92,119 @@ type FeedbackMetrics = {
   pendientesEvaluacion: number;
 };
 
-export default async function HistorialPage() {
+/** Construye URL con page/pageSize preservando otros query params */
+function pageUrl(baseSearchParams: Record<string, string | undefined>, page: number, pageSize: number) {
+  const sp = new URLSearchParams();
+  Object.entries(baseSearchParams).forEach(([k, v]) => {
+    if (v && k !== "page" && k !== "pageSize") sp.set(k, v);
+  });
+  sp.set("page", String(page));
+  sp.set("pageSize", String(pageSize));
+  return `?${sp.toString()}`;
+}
+
+/** Genera ventana de numeración centrada en la página actual */
+function numberedPages(current: number, totalPages: number) {
+  let start = Math.max(1, current - Math.floor(MAX_BTNS / 2));
+  let end = start + MAX_BTNS - 1;
+  if (end > totalPages) {
+    end = totalPages;
+    start = Math.max(1, end - MAX_BTNS + 1);
+  }
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+function formatRankFromRow(row: FeedbackRow) {
+  if (row.rank_pos != null && row.rank_total != null) return `${row.rank_pos}/${row.rank_total}`;
+  return extractRankShortStrict(row.resultado) || extractRankShortStrict(row.comentario);
+}
+
+/* ==================== Badge resultado ==================== */
+function StatusBadge({ resultado }: { resultado: string }) {
+  const onlyRank = extractRankShortStrict(resultado);
+
+  if (onlyRank) {
+    return <span className={rankBadgeClass()}>{onlyRank}</span>;
+  }
+
+  const r = (resultado || "").toLowerCase();
+
+  if (r.includes("acept")) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+        {resultado}
+      </span>
+    );
+  }
+  if (r.includes("no seleccion")) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-yellow-200 bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800">
+        {resultado}
+      </span>
+    );
+  }
+  if (r.includes("evalu")) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">
+        {resultado}
+      </span>
+    );
+  }
+  if (r.includes("rechaz")) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-800">
+        {resultado}
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+      {resultado}
+    </span>
+  );
+}
+
+export default async function HistorialPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
-  const proveedorId =
+  // ✅ Next 15: await params
+  const sp = await searchParams;
+
+  // ✅ Definí proveedorId (string) a partir de la sesión
+  const proveedorId = String(
     (session.user as any)?.id ??
-    (session.user as any)?.id_cliente ??
-    (session.user as any)?.userId ??
-    (session.user as any)?.user_id ??
-    (session.user as any)?.cliente_id ??
-    (session.user as any)?.proveedor_id ??
-    (session.user as any)?.id_cliente ??
-    session.user.id;
+      (session.user as any)?.id_cliente ??
+      (session.user as any)?.userId ??
+      (session.user as any)?.user_id ??
+      (session.user as any)?.cliente_id ??
+      (session.user as any)?.proveedor_id ??
+      (session.user as any)?.id_cliente ??
+      (session.user as any)?.id ??
+      ""
+  );
+
+  // --- Parámetros de paginación ---
+  const pageParamRaw = Array.isArray(sp.page) ? sp.page[0] : sp.page;
+  const pageSizeParamRaw = Array.isArray(sp.pageSize) ? sp.pageSize[0] : sp.pageSize;
+
+  const PAGE_SIZE = Math.max(1, Math.min(100, Number(pageSizeParamRaw) || PAGE_SIZE_DEFAULT));
+  const page = Math.max(1, Number(pageParamRaw) || 1);
+
+  // --- Totales para paginación ---
+  const totalItems = await prisma.cotizacionParticipacion.count({
+    where: { proveedor_id: String(proveedorId) },
+  });
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+
+  // Corrige page si viene fuera de rango
+  const safePage = Math.min(page, totalPages);
+  const skip = (safePage - 1) * PAGE_SIZE;
 
   let rows: FeedbackRow[] = [];
   let metrics: FeedbackMetrics;
@@ -90,34 +223,34 @@ export default async function HistorialPage() {
           resultado: true,
           comentario: true,
           sugerencia: true,
+          // NUEVO:
+          rank_pos: true,
+          rank_total: true,
         },
-        take: 100,
-      }) as Promise<EventRowDB[]>,
+        skip,
+        take: PAGE_SIZE,
+      }),
       prisma.quoteMetricsDaily.findFirst({
         where: { proveedor_id: String(proveedorId) },
         orderBy: { fecha: "desc" },
       }),
     ]);
 
-rows = events.map((r: EventRowDB) => {
-  const clean = (txt?: string | null) =>
-    (txt ?? "").replace(/simulada/ig, "").trim();
+    const clean = (txt?: string | null) => (txt ?? "").replace(/simulada/gi, "").trim();
 
-  return {
-    id: String(r.id),
-    fecha: new Date(r.fecha).toISOString(),
-    proyecto: clean(r.proyecto) || "-",
-    accion: clean(r.accion) || "-",
-    resultado: clean(r.resultado) || "-",
-    comentario: r.comentario ?? "",   // <- aquí NO tocamos: debe verse tal cual llega (comentario_ia)
-    sugerencia: r.sugerencia ?? "",
-  };
-});
+    rows = (events as EventRowDB[]).map((r) => ({
+      id: String(r.id),
+      fecha: new Date(r.fecha).toISOString(),
+      proyecto: clean(r.proyecto) || "-",
+      accion: clean(r.accion) || "-",
+      resultado: clean(r.resultado) || "-",
+      comentario: r.comentario ?? "",
+      sugerencia: r.sugerencia ?? "",
+      rank_pos: r.rank_pos ?? null,
+      rank_total: r.rank_total ?? null,
+    }));
 
-    aceptadasCount = rows.filter(
-      (r) => (r.resultado || "").toLowerCase().includes("acept")
-    ).length;
-
+    // Métricas
     if (metricsRow) {
       metrics = {
         totalParticipaciones: metricsRow.total_participaciones,
@@ -129,32 +262,27 @@ rows = events.map((r: EventRowDB) => {
         pendientesEvaluacion: metricsRow.pendientes_evaluacion,
       };
     } else {
-      const participaciones = rows.filter(
-        (r) =>
-          (r.accion || "").toLowerCase().includes("particip") ||
-          (r.accion || "").toLowerCase().includes("cotiz")
-      );
-
-      const total = participaciones.length;
-      const onTime = participaciones.filter((r) =>
-        (r.comentario || "").toLowerCase().includes("plazo")
-      ).length;
-
-      const enEvaluacion = rows.filter((r) =>
-        (r.resultado || "").toLowerCase().includes("evalua")
-      ).length;
+      const aceptadasEnPagina = rows.filter((r) => (r.resultado || "").toLowerCase().includes("acept")).length;
+      const enEvaluacion = rows.filter((r) => (r.resultado || "").toLowerCase().includes("evalua")).length;
 
       metrics = {
-        totalParticipaciones: total,
-        pctRespuestaATiempo: total ? Math.round((onTime / total) * 100) : 0,
-        pctAceptacion: rows.length ? Math.round((aceptadasCount / rows.length) * 100) : 0,
-        promedioCalificacion: 4.3,
-        tiempoPromedioEntregaDias: 5,
+        totalParticipaciones: totalItems,
+        pctRespuestaATiempo: 0,
+        pctAceptacion: totalItems ? Math.round((aceptadasEnPagina / totalItems) * 100) : 0,
+        promedioCalificacion: 0,
+        tiempoPromedioEntregaDias: 0,
         ultimaParticipacion: rows[0]?.fecha,
         pendientesEvaluacion: enEvaluacion,
       };
     }
-  } catch (e) {
+
+    aceptadasCount = await prisma.cotizacionParticipacion.count({
+      where: {
+        proveedor_id: String(proveedorId),
+        resultado: { contains: "acept", mode: "insensitive" },
+      },
+    });
+  } catch {
     rows = [];
     metrics = {
       totalParticipaciones: 0,
@@ -167,9 +295,16 @@ rows = events.map((r: EventRowDB) => {
     };
   }
 
-  const suggestions = rows.filter(
-    (r) => (r.sugerencia ?? "").trim().length > 0
-  );
+  const suggestions = rows.filter((r) => (r.sugerencia ?? "").trim().length > 0);
+
+  const startIdx = totalItems === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const endIdx = Math.min(safePage * PAGE_SIZE, totalItems);
+  const nums = numberedPages(safePage, totalPages);
+
+  const baseParams: Record<string, string | undefined> = {
+  page: String(page),
+  pageSize: String(PAGE_SIZE),
+};
 
   return (
     <div className="min-h-screen p-4 md:p-6">
@@ -239,8 +374,12 @@ rows = events.map((r: EventRowDB) => {
 
         {/* Tabla de historial */}
         <div className="overflow-hidden rounded-3xl border border-slate-200/50 bg-white shadow-xl">
-          <div className="border-b border-yellow-600/20 bg-gradient-to-r from-yellow-400 to-yellow-500 px-8 py-6">
+          <div className="border-b border-yellow-600/20 bg-gradient-to-r from-yellow-400 to-yellow-500 px-8 py-6 flex items-center justify-between">
             <h3 className="text-2xl font-bold text-slate-800">HISTORIAL DE COTIZACIONES</h3>
+            <div className="text-xs text-slate-700">
+              Mostrando <span className="font-semibold">{startIdx}</span>–<span className="font-semibold">{endIdx}</span> de{" "}
+              <span className="font-semibold">{totalItems}</span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -285,29 +424,34 @@ rows = events.map((r: EventRowDB) => {
                     {/* Acción */}
                     <td className="px-6 py-5 text-sm text-slate-600">{row.accion}</td>
 
-                    {/* Resultado */}
+                    {/* Resultado (prioriza rank numérico) */}
                     <td className="px-6 py-5 whitespace-nowrap">
-                      <StatusBadge resultado={row.resultado} />
+                      {(() => {
+                        const rankDisplay = formatRankFromRow(row);
+                        if (rankDisplay) {
+                          return <span className={rankBadgeClass()}>{rankDisplay}</span>;
+                        }
+                        return <StatusBadge resultado={row.resultado} />;
+                      })()}
                     </td>
 
-                    {/* Comentario expandible */}
-{/* Comentario con scroll interno */}
-<td className="px-6 py-5 text-sm text-slate-700">
-  {row.comentario ? (
-    <div
-      className={[
-        "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
-        "whitespace-pre-wrap break-words",
-        "overflow-y-auto pr-2",
-        "max-h-40 md:max-h-56",
-      ].join(" ")}
-    >
-      {row.comentario}
-    </div>
-  ) : (
-    <div className="text-slate-400">-</div>
-  )}
-</td>
+                    {/* Comentario con scroll interno */}
+                    <td className="px-6 py-5 text-sm text-slate-700">
+                      {row.comentario ? (
+                        <div
+                          className={[
+                            "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
+                            "whitespace-pre-wrap break-words",
+                            "overflow-y-auto pr-2",
+                            "max-h-40 md:max-h-56",
+                          ].join(" ")}
+                        >
+                          {row.comentario}
+                        </div>
+                      ) : (
+                        <div className="text-slate-400">-</div>
+                      )}
+                    </td>
                   </tr>
                 ))}
 
@@ -326,6 +470,80 @@ rows = events.map((r: EventRowDB) => {
               </tbody>
             </table>
           </div>
+
+          {/* Paginador estilo Ventas (server-side con links) */}
+          {totalItems > 0 && (
+            <div className="px-6 py-4 flex flex-col sm:flex-row gap-3 sm:gap-0 items-center justify-between bg-gray-50 border-t">
+              <span className="text-sm text-gray-600">
+                Página <strong>{safePage}</strong> de <strong>{totalPages}</strong> ·&nbsp;Mostrando{" "}
+                <strong>{rows.length}</strong> de <strong>{totalItems}</strong>
+              </span>
+
+              <div className="flex items-center gap-1">
+                <Link
+                  href={pageUrl(baseParams, 1, PAGE_SIZE)}
+                  aria-disabled={safePage === 1}
+                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
+                    safePage === 1 ? "pointer-events-none opacity-50" : "hover:bg-white"
+                  }`}
+                  style={{ color: AZUL }}
+                >
+                  <span className="hidden sm:inline">Primera</span>
+                </Link>
+
+                <Link
+                  href={pageUrl(baseParams, Math.max(1, safePage - 1), PAGE_SIZE)}
+                  aria-disabled={safePage === 1}
+                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
+                    safePage === 1 ? "pointer-events-none opacity-50" : "hover:bg-white"
+                  }`}
+                  style={{ color: AZUL }}
+                >
+                  <span className="hidden sm:inline">Anterior</span>
+                </Link>
+
+                {nums.map((n) => (
+                  <Link
+                    key={n}
+                    href={pageUrl(baseParams, n, PAGE_SIZE)}
+                    aria-current={n === safePage ? "page" : undefined}
+                    className={`px-3 py-2 rounded-lg text-sm font-semibold border transition ${
+                      n === safePage ? "shadow-sm" : "hover:bg-white"
+                    }`}
+                    style={
+                      n === safePage
+                        ? { backgroundColor: AMARILLO, color: AZUL, borderColor: "transparent" }
+                        : { color: AZUL, borderColor: "#e5e7eb" }
+                    }
+                  >
+                    {n}
+                  </Link>
+                ))}
+
+                <Link
+                  href={pageUrl(baseParams, Math.min(totalPages, safePage + 1), PAGE_SIZE)}
+                  aria-disabled={safePage === totalPages}
+                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
+                    safePage === totalPages ? "pointer-events-none opacity-50" : "hover:bg-white"
+                  }`}
+                  style={{ color: AZUL }}
+                >
+                  <span className="hidden sm:inline">Siguiente</span>
+                </Link>
+
+                <Link
+                  href={pageUrl(baseParams, totalPages, PAGE_SIZE)}
+                  aria-disabled={safePage === totalPages}
+                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
+                    safePage === totalPages ? "pointer-events-none opacity-50" : "hover:bg-white"
+                  }`}
+                  style={{ color: AZUL }}
+                >
+                  <span className="hidden sm:inline">Última</span>
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Sugerencias */}
@@ -334,7 +552,7 @@ rows = events.map((r: EventRowDB) => {
             <div className="flex items-start space-x-4">
               <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-blue-500">
                 <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547z" />
                 </svg>
               </div>
               <div className="flex-1">
@@ -355,48 +573,5 @@ rows = events.map((r: EventRowDB) => {
         )}
       </div>
     </div>
-  );
-}
-
-/* ==================== Badge resultado ==================== */
-function StatusBadge({ resultado }: { resultado: string }) {
-  const r = (resultado || "").toLowerCase();
-
-  if (r.includes("acept")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
-        {resultado}
-      </span>
-    );
-  }
-
-  if (r.includes("no seleccion")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-yellow-200 bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800">
-        {resultado}
-      </span>
-    );
-  }
-
-  if (r.includes("evalu")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">
-        {resultado}
-      </span>
-    );
-  }
-
-  if (r.includes("rechaz")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-800">
-        {resultado}
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-      {resultado}
-    </span>
   );
 }

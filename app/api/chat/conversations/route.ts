@@ -14,11 +14,17 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
     }
 
-    // id_cliente asociado al usuario (por id o por email)
+    // Buscar cliente vinculado al usuario
     const myCliente =
-      (await prisma.cliente.findUnique({ where: { id_cliente: me.id }, select: { id_cliente: true } })) ||
+      (await prisma.cliente.findUnique({
+        where: { id_cliente: me.id },
+        select: { id_cliente: true },
+      })) ||
       (me.email
-        ? await prisma.cliente.findUnique({ where: { email: me.email }, select: { id_cliente: true } })
+        ? await prisma.cliente.findUnique({
+            where: { email: me.email },
+            select: { id_cliente: true },
+          })
         : null);
 
     if (!myCliente?.id_cliente) {
@@ -27,16 +33,28 @@ export async function GET() {
 
     const myId = myCliente.id_cliente;
 
+    // ✅ Traemos la relación con CotizacionParticipacion
     const convs = await prisma.conversation.findMany({
       where: { participants: { some: { userId: myId } } },
       orderBy: { updatedAt: "desc" },
       take: 100,
       include: {
-        messages: { orderBy: { createdAt: "desc" }, take: 1 }, // Message { id, body, createdAt, ... }
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
         participants: {
           select: {
             userId: true,
             user: { select: { nombre: true, email: true } },
+          },
+        },
+        participation: {
+          select: {
+            id: true,
+            proyecto: true,
+            comentario: true,
+            resultado: true,
           },
         },
       },
@@ -49,13 +67,17 @@ export async function GET() {
 
       return {
         id: c.id,
-        // Si tu Conversation tiene `proyecto` o `title` usalos; si no, “Venta”
-        proyecto: (c as any).proyecto || (c as any).title || "Venta",
+        // 🔹 Si existe el proyecto en la participación, úsalo como título base
+        proyecto: c.participation?.proyecto || "Venta",
         peerName: peer?.user?.nombre || peer?.user?.email || null,
-        lastMessage: last?.body || null,          // ✅ body (no content)
-        unreadCount: 0,                           // reemplazar si tenés tracking
+        lastMessage: last?.body || null,
+        unreadCount: 0,
         updatedAt: c.updatedAt?.toISOString?.() ?? null,
-        saleId: (c as any).saleId ?? (c as any).ventaId ?? null,
+        saleId: c.participation?.id ?? null,
+
+        // 🔹 (Opcional) si querés armar título tipo “Venta - Proyecto”
+        producto_desc: c.participation?.proyecto ?? null,
+        codigo_interno: null,
       };
     });
 

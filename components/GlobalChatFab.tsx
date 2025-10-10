@@ -33,17 +33,48 @@ async function safeJson(res: Response) {
   }
 }
 
-/** Construye "Venta - {Producto} {CODIGO}" si hay datos, si no, usa el proyecto */
-function formatTitle(c?: Pick<ConversationRow, "proyecto" | "producto_desc" | "codigo_interno"> | null, fallback = "Chat") {
-  if (!c) return fallback;
-  const base = c.proyecto || "Venta";
-  const desc = (c.producto_desc || "").trim();
-  const code = (c.codigo_interno || "").trim();
-  if (desc && code) return `${base} - ${desc} ${code}`;
-  if (desc) return `${base} - ${desc}`;
-  if (code) return `${base} - ${code}`;
-  return base || fallback;
+function normalizeDesc(raw?: string | null) {
+  const s = (raw || "").trim();
+  if (!s) return "";
+  // quita prefijos comunes al inicio
+  let out = s.replace(/^\s*(adjudicaci[oó]n|venta|proyecto)\s*:\s*/i, "");
+  // colapsa espacios y guiones sobrantes
+  out = out.replace(/\s*-\s*/g, " - ").replace(/\s+/g, " ").trim();
+  return out;
 }
+
+function dedupeParts(parts: string[]) {
+  const seen = new Set<string>();
+  const res: string[] = [];
+  for (const p of parts) {
+    const k = p.toLocaleLowerCase();
+    if (!p || seen.has(k)) continue;
+    seen.add(k);
+    res.push(p);
+  }
+  return res;
+}
+
+/** Construye "Venta - {Producto} {CODIGO}" si hay datos, si no, usa el proyecto */
+/** Construye "Venta - {Producto} {CODIGO}" si hay datos; si no, "Venta" */
+/** "Venta - {Producto} {CODIGO}" (limpio) o "Venta" */
+function formatTitle(
+  c?: Pick<ConversationRow, "producto_desc" | "codigo_interno"> | null
+) {
+  const base = "Venta";
+  if (!c) return base;
+
+  const desc = normalizeDesc(c.producto_desc);
+  const code = (c.codigo_interno || "").trim();
+
+  // evita "X - X"
+  const pieces = dedupeParts([desc]).filter(Boolean);
+  const right = [pieces.join(" - "), code].filter(Boolean).join(" ").trim();
+
+  return right ? `${base} - ${right}` : base;
+}
+
+
 
 export default function GlobalChatFab() {
   const { status } = useSession();
@@ -115,7 +146,7 @@ export default function GlobalChatFab() {
       // Si hay una conversación activa, refrescar su título (por si ahora llegó el producto/código)
       if (activeId) {
         const current = items.find(i => i.id === activeId);
-        setActiveTitle(formatTitle(current, "Chat"));
+        setActiveTitle(formatTitle(current));
       }
     } catch (e: any) {
       setErrorList(e?.message || "Error desconocido");
@@ -136,24 +167,26 @@ export default function GlobalChatFab() {
   }, [open]);
 
   // Escuchar evento para abrir chat desde ventas
-  useEffect(() => {
-    const handleOpenChat = (e: CustomEvent) => {
-      const { conversationId, title, producto_desc, codigo_interno, proyecto } = e.detail || {};
-      const composed = title || formatTitle({ proyecto, producto_desc, codigo_interno }, "Chat");
-      setOpen(true);
-      setActiveId(conversationId);
-      setActiveTitle(composed);
-    };
+useEffect(() => {
+  const handleOpenChat = (e: CustomEvent) => {
+    const { conversationId, /* title, */ producto_desc, codigo_interno } = e.detail || {};
+    // ignoramos "title" para evitar "Adjudicación: X - Adjudicación: X"
+    const composed = formatTitle({ producto_desc, codigo_interno });
+    setOpen(true);
+    setActiveId(conversationId);
+    setActiveTitle(composed);
+  };
 
-    window.addEventListener("openGlobalChat", handleOpenChat as EventListener);
-    return () => {
-      window.removeEventListener("openGlobalChat", handleOpenChat as EventListener);
-    };
-  }, []);
+  window.addEventListener("openGlobalChat", handleOpenChat as EventListener);
+  return () => {
+    window.removeEventListener("openGlobalChat", handleOpenChat as EventListener);
+  };
+}, []);
+
 
   const onOpenConversation = (c: ConversationRow) => {
     setActiveId(c.id);
-    setActiveTitle(formatTitle(c, "Chat"));
+    setActiveTitle(formatTitle(c));
     setConvs((prev) => prev.map((x) => (x.id === c.id ? { ...x, unreadCount: 0 } : x)));
   };
 
@@ -263,7 +296,7 @@ export default function GlobalChatFab() {
                       <div className="flex-1 overflow-hidden min-w-0">
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <div className="font-semibold truncate text-gray-900">
-                            {formatTitle(c, "Venta")}
+                            {formatTitle(c)}
                           </div>
                           <div className="text-xs text-gray-400 font-medium shrink-0">
                             {timeAgo(c.updatedAt)}

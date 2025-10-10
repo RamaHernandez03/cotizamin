@@ -185,6 +185,14 @@ export default async function LabQuotePage({
       (a, b) => a.precio_actual - b.precio_actual
     );
     const top = uniques.slice(0, limit);
+    // Calcular ranking real
+    const totalProveedores = uniques.length;
+    const ranked = uniques.map((p, i) => ({
+      ...p,
+      rank: i + 1,
+      total: totalProveedores,
+    }));
+    
 
     // ====== NUEVO: cantidad real de proveedores que cumplen filtros ======
     providerCountForKey = uniques.length;

@@ -1,4 +1,3 @@
-// app/api/quotes/ingest/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -66,47 +65,90 @@ export async function POST(req: NextRequest) {
   }
 
   const blocks = payload as N8nItem[];
-  const rows: any[] = [];
   const now = new Date();
 
-  for (const block of blocks) {
-    const q = s(block.query);
+  // Trabajamos por upsert fila a fila para mergear comentario/sugerencia en la participación creada por el lab
+  await prisma.$transaction(async (tx) => {
+    for (const block of blocks) {
+      const q = s(block.query);
+      if (!q) continue;
 
-    for (const r of (block.resultados ?? [])) {
-      const proveedor_id = s(r.proveedor_id);
-      if (!proveedor_id) continue;
+      // Usamos EXACTAMENTE el mismo "proyecto" que crea notifyFromQuery
+      const proyectoName = `Cotización: ${q}`;
 
-      const desc = s(r.descripcion);
-      const code = s(r.codigo_interno);
-      const proyecto =
-        desc && code ? `${desc} - ${code}` :
-        desc ? desc :
-        q ? `Cotización: ${q}` : "Cotización";
+      for (const r of (block.resultados ?? [])) {
+        const proveedor_id = s(r.proveedor_id);
+        if (!proveedor_id) continue;
 
-      const resultadoBase = s(r.resultado) || "Participación";
-      const rankTxt =
-        r.rank != null && r.total_proveedores != null
-          ? ` (Rank #${i(r.rank)}/${i(r.total_proveedores)})`
-          : "";
-      const resultado = `${resultadoBase}${rankTxt}`;
+        // Ranking numérico
+        const rank_pos = r.rank != null ? i(r.rank) : null;
+        const rank_total = r.total_proveedores != null ? i(r.total_proveedores) : null;
 
-const comentarioPlano = s(r.comentario_ia);
-rows.push({
-  proveedor_id,
-  fecha: now,
-  proyecto,
-  accion: "Solicitud de cotización (lab)",
-  resultado,
-  comentario: comentarioPlano || buildComentario(r), // <— tal cual llega, sin prefijos, fallback si faltara
-  sugerencia: s(r.sugerencia_regla) || null,
-});
+        // Texto de resultado "humano" con rank (si existe)
+        const resultadoBase = s(r.resultado) || "Participación";
+        const rankTxt =
+          rank_pos != null && rank_total != null
+            ? ` (Ranking: ${rank_pos}/${rank_total})`
+            : "";
+        const resultado = `${resultadoBase}${rankTxt}`.trim();
+
+        // Comentario preferente desde IA; si no viene, uno rico con fields
+        const comentarioDesdeIa = s(r.comentario_ia);
+        const comentarioNuevo = comentarioDesdeIa || buildComentario(r);
+        const sugerenciaNueva = s(r.sugerencia_regla) || null;
+
+        // Intentamos encontrar la participación "reciente" creada por el lab/quote
+        const recienteDesde = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 3); // 72h
+        const prev = await tx.cotizacionParticipacion.findFirst({
+          where: {
+            proveedor_id,
+            proyecto: proyectoName,
+            fecha: { gte: recienteDesde },
+          },
+          orderBy: { fecha: "desc" },
+          select: { id: true, comentario: true, sugerencia: true },
+        });
+
+        if (prev?.id) {
+          // Merge simple: si ya había comentario, lo enriquecemos; si no, lo seteamos
+          // Priorizamos escribir el de n8n (IA) arriba para que sea visible
+          const comentarioMerged = comentarioDesdeIa
+            ? (prev.comentario
+                ? `IA: ${comentarioDesdeIa}\n\n${prev.comentario}`
+                : `IA: ${comentarioDesdeIa}`)
+            : (prev.comentario ? prev.comentario : comentarioNuevo);
+
+          await tx.cotizacionParticipacion.update({
+            where: { id: prev.id },
+            data: {
+              fecha: now,
+              accion: "Participación", // mantenemos la misma acción
+              resultado,
+              comentario: comentarioMerged,
+              sugerencia: sugerenciaNueva ?? prev.sugerencia ?? null,
+              rank_pos,
+              rank_total,
+            },
+          });
+        } else {
+          // Si por algún motivo todavía no existía, la creamos CONSISTENTE con el lab
+          await tx.cotizacionParticipacion.create({
+            data: {
+              proveedor_id,
+              fecha: now,
+              proyecto: proyectoName,
+              accion: "Participación",
+              resultado,
+              comentario: comentarioNuevo,
+              sugerencia: sugerenciaNueva,
+              rank_pos,
+              rank_total,
+            },
+          });
+        }
+      }
     }
-  }
+  });
 
-  if (rows.length === 0) {
-    return NextResponse.json({ ok: true, inserted: 0 });
-  }
-
-  await prisma.cotizacionParticipacion.createMany({ data: rows });
-  return NextResponse.json({ ok: true, inserted: rows.length });
+  return NextResponse.json({ ok: true });
 }
