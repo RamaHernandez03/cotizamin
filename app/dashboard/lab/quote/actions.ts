@@ -10,7 +10,6 @@ import { authOptions } from "@/lib/auth";
  * Helpers compartidos
  * ========================= */
 
-
 async function ensureAdminCliente(email: string, nombre?: string | null) {
   const found = await prisma.cliente.findFirst({ where: { email }, select: { id_cliente: true } });
   if (found) return found.id_cliente;
@@ -22,29 +21,57 @@ async function ensureAdminCliente(email: string, nombre?: string | null) {
   return created.id_cliente;
 }
 
-/** Resuelve una base URL confiable para fetch interno */
+/** Inserta en RecentSuggestion y recorta FIFO cap 10 por proveedor */
+async function pushRecentSuggestion(params: {
+  proveedor_id: string;
+  proyecto?: string | null;
+  comentario?: string | null;
+  sugerencia: string;
+}) {
+  const { proveedor_id, proyecto, comentario, sugerencia } = params;
 
+  await prisma.$transaction(async (tx) => {
+    await tx.recentSuggestion.create({
+      data: {
+        proveedor_id,
+        proyecto: proyecto ?? null,
+        comentario: comentario ?? null,
+        sugerencia,
+      },
+    });
+
+    // Recortar manteniendo 10 más recientes
+    const ids = await tx.recentSuggestion.findMany({
+      where: { proveedor_id },
+      select: { id: true },
+      orderBy: { created_at: "desc" },
+    });
+
+    if (ids.length > 10) {
+      const toDelete = ids.slice(10).map((r) => r.id);
+      await tx.recentSuggestion.deleteMany({ where: { id: { in: toDelete } } });
+    }
+  });
+}
+
+/** Normaliza payload del n8n a blocks [{query,resultados[]}] */
 function normalizeN8nDataToBlocks(raw: any, q: string) {
   if (!raw) return [];
-  // Caso 1: ya viene como array de bloques
   if (Array.isArray(raw) && raw.every((b) => typeof b === "object" && ("resultados" in b || "results" in b))) {
     return raw.map((b) => ({
       query: b.query ?? b.q ?? q,
       resultados: Array.isArray(b.resultados) ? b.resultados : (Array.isArray(b.results) ? b.results : []),
     }));
   }
-  // Caso 2: viene UN bloque { query, resultados[] }
   if (typeof raw === "object" && (Array.isArray(raw.resultados) || Array.isArray(raw.results))) {
     return [{
       query: raw.query ?? raw.q ?? q,
       resultados: Array.isArray(raw.resultados) ? raw.resultados : (raw.results ?? []),
     }];
   }
-  // Caso 3: viene array "plano" de resultados
   if (Array.isArray(raw) && (raw.length === 0 || typeof raw[0] === "object")) {
-    return [{ query: q, resultados: raw }];
+    return [{ query: q,Resultados: undefined, resultados: raw }];
   }
-  // Caso 4: desconocido → nada
   return [];
 }
 
@@ -82,12 +109,11 @@ async function triggerWebhookForProvider(params: {
   const j1 = (await r1.json()) as { ok: boolean; data?: any };
   if (!j1.ok) throw new Error("refresh not ok");
 
-  // 🔧 Normalización acá
+  // 2) Normalización
   const blocks = normalizeN8nDataToBlocks(j1.data, params.q);
-  // Si no hay nada que ingerir, corto temprano para no romper
   if (!blocks.length) return { ok: true, ingested: 0 };
 
-  // 2) Ingesta SIEMPRE como array de blocks normalizado
+  // 3) Ingesta como array de blocks
   const r2 = await fetch(`${base}/api/quotes/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -102,20 +128,20 @@ async function triggerWebhookForProvider(params: {
   return j2;
 }
 
-
 /** =========================
  * Actions
  * ========================= */
 
 /**
  * Acción MASIVA: notificar a los proveedores listados (crear/actualizar feedback)
- * - Crea/actualiza registros en `cotizacionParticipacion` con:
+ * - Crea/actualiza registros en `cotizacionParticipacion`:
  *   proyecto = "Cotización: {q}"
  *   accion   = "Participación"
  *   resultado= "Posición {rank} de {total}"
  *   rank_pos / rank_total
  *   comentario = "Producto: … • Código: … • Precio: …"
- * - (Opcional) dispara n8n en background (best-effort)
+ * - Dispara n8n (best-effort)
+ * - Empuja a RecentSuggestion con FIFO cap 10
  */
 export async function notifyFromQuery(formData: FormData) {
   const q = sanitize(formData.get("q"));
@@ -176,17 +202,15 @@ export async function notifyFromQuery(formData: FormData) {
   const now = new Date();
 
   // 4) Crea/actualiza participaciones para los que se notifican (limit)
-  await prisma.$transaction(async (tx) => {
-    const list = ranked.slice(0, limit);
+  const topList = ranked.slice(0, limit);
 
-    for (const t of list) {
+  await prisma.$transaction(async (tx) => {
+    for (const t of topList) {
       const comentario = [
         `Producto: ${t.descripcion || q}`,
         `Código: ${t.codigo_interno ?? "N/D"}`,
         Number.isFinite(t.precio_actual) ? `Precio: $${t.precio_actual.toLocaleString("es-AR")}` : null,
-      ]
-        .filter(Boolean)
-        .join(" • ");
+      ].filter(Boolean).join(" • ");
 
       // Si existe algo muy reciente para este proveedor y proyecto, lo actualizo
       const prev = await tx.cotizacionParticipacion.findFirst({
@@ -229,9 +253,9 @@ export async function notifyFromQuery(formData: FormData) {
     }
   });
 
-  // 5) (Opcional) mantener tus flujos n8n como best-effort (no bloquea)
-  await Promise.allSettled(
-    ranked.slice(0, limit).map((t) =>
+  // 5) Best-effort: disparo n8n y empujo a Sugerencias (FIFO) en paralelo
+  await Promise.allSettled([
+    ...topList.map((t) =>
       triggerWebhookForProvider({
         proveedor_id: t.proveedor_id,
         q,
@@ -239,8 +263,27 @@ export async function notifyFromQuery(formData: FormData) {
         rank: t.rank,
         total: t.total,
       })
-    )
-  );
+    ),
+    ...topList.map((t) => {
+      const comentario = [
+        `Producto: ${t.descripcion || q}`,
+        `Código: ${t.codigo_interno ?? "N/D"}`,
+        Number.isFinite(t.precio_actual) ? `Precio: $${t.precio_actual.toLocaleString("es-AR")}` : null,
+      ].filter(Boolean).join(" • ");
+
+      const sugerenciaTexto =
+        `Participaste en ${proyectoName} — quedaste ${t.rank}/${t.total}. ` +
+        (Number.isFinite(t.precio_actual) ? `Precio: $${t.precio_actual.toLocaleString("es-AR")}. ` : "") +
+        `Revisá precio/stock para mejorar tu posición.`;
+
+      return pushRecentSuggestion({
+        proveedor_id: t.proveedor_id,
+        proyecto: proyectoName,
+        comentario,
+        sugerencia: sugerenciaTexto,
+      });
+    }),
+  ]);
 
   // 6) refrescamos feedback y volvemos a la misma pantalla con flag "sent"
   revalidatePath("/dashboard/feedback");
@@ -253,7 +296,9 @@ export async function notifyFromQuery(formData: FormData) {
 
 /**
  * Acción POR FILA: adjudicar al ganador e iniciar el chat 1–a–1
- * Versión tolerante: si faltan tablas de chat no rompe; deja la participación y redirige a Feedback.
+ * - Upsert de participación "Aceptado"
+ * - Intento de crear/abrir chat si existen tablas
+ * - Empuja a Sugerencias (FIFO cap 10)
  */
 export async function awardAndOpenChat(formData: FormData) {
   const session = await getServerSession(authOptions);
@@ -263,7 +308,6 @@ export async function awardAndOpenChat(formData: FormData) {
   const userName = String((session.user as any)?.name || "") || null;
   if (!userEmail) throw new Error("Admin sin email en sesión");
 
-  // Campos que mandamos desde la tabla (por fila)
   const proveedor_id = String(formData.get("proveedor_id") || "");
   const q = String(formData.get("q") || "");
   const id_producto = String(formData.get("id_producto") || "");
@@ -273,7 +317,6 @@ export async function awardAndOpenChat(formData: FormData) {
 
   if (!proveedor_id || !q) throw new Error("Bad request");
 
-  // Creamos/aseguramos Cliente "admin"
   const adminClienteId = await ensureAdminCliente(userEmail, userName);
 
   const proyectoName = `Adjudicación: ${q}`;
@@ -327,9 +370,9 @@ export async function awardAndOpenChat(formData: FormData) {
   // 2) intentar chat sólo si existen las tablas
   let conversationId: string | null = null;
   try {
-    const [{ exists }] = await prisma.$queryRawUnsafe<
-      Array<{ exists: boolean }>
-    >(`SELECT to_regclass('public."Conversation"') IS NOT NULL AS exists`);
+    const [{ exists }] = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
+      `SELECT to_regclass('public."Conversation"') IS NOT NULL AS exists`
+    );
     if (!exists) throw new Error("Chat tables missing");
 
     const result = await prisma.$transaction(async (tx) => {
@@ -344,7 +387,7 @@ export async function awardAndOpenChat(formData: FormData) {
             participationId: participation.id,
             participants: {
               create: [
-                { userId: proveedor_id }, // proveedor ganador
+                { userId: proveedor_id },   // proveedor ganador
                 { userId: adminClienteId }, // admin/operador
               ],
             },
@@ -388,12 +431,21 @@ export async function awardAndOpenChat(formData: FormData) {
     console.warn("[awardAndOpenChat] Chat deshabilitado (faltan tablas). Sigo sin chat.", e);
   }
 
-  // refrescamos vistas relacionadas
+  // 3) Empujar a Sugerencias (FIFO)
+  const sugerenciaTexto = `¡Ganaste la cotización "${q}"! Abrimos un chat para coordinar entrega y condiciones.`;
+  await pushRecentSuggestion({
+    proveedor_id,
+    proyecto: proyectoName,
+    comentario: `Producto: ${descripcion || q} • Código: ${codigo || "N/D"}`,
+    sugerencia: sugerenciaTexto,
+  });
+
+  // 4) refrescamos vistas relacionadas
   revalidatePath("/dashboard/feedback");
   revalidatePath("/dashboard/sales");
   revalidatePath("/dashboard/messages");
 
-  // redirigimos
+  // 5) redirigimos
   if (conversationId) {
     redirect(`/dashboard/messages/${conversationId}`);
   } else {
