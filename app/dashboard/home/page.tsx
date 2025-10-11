@@ -53,6 +53,7 @@ type DashboardData = {
   cliente: { certificaciones: string | null; nombre: string | null } | null;
   participacionesMes: number;
   participaciones90d: number;
+  ventas90d: number; // 👈 NUEVO
   resultados90d: { resultado: string | null }[];
   feedbacks5: {
     id: string; fecha: Date; proyecto: string | null; accion: string | null;
@@ -73,6 +74,7 @@ const getDashboardData = unstable_cache(
       cliente,
       participacionesMes,
       participaciones90d,
+      ventas90d, // 👈 NUEVO
       resultados90d,
       feedbacks5,
       recBatches
@@ -93,6 +95,14 @@ const getDashboardData = unstable_cache(
       prisma.cotizacionParticipacion.count({
         where: { proveedor_id: proveedorId, fecha: { gte: daysAgo(90) } },
       }),
+      // ===== Ventas en 90 días (heurística: ganó/seleccionado/venta)
+prisma.cotizacionParticipacion.count({
+  where: {
+    proveedor_id: proveedorId,
+    fecha: { gte: daysAgo(90) },
+    resultado: { contains: "acept", mode: "insensitive" },
+  },
+}),
       prisma.cotizacionParticipacion.findMany({
         where: { proveedor_id: proveedorId, fecha: { gte: daysAgo(90) } },
         select: { resultado: true },
@@ -124,6 +134,7 @@ const getDashboardData = unstable_cache(
       cliente,
       participacionesMes,
       participaciones90d,
+      ventas90d, // 👈 NUEVO
       resultados90d,
       feedbacks5,
       recBatch: recBatches?.[0]
@@ -162,7 +173,15 @@ export default async function DashboardHomePage() {
   const data = await getDashboardData(proveedorId);
 
   // 2) Derivados ligeros (todo server-side, sin JS al cliente)
-  const { productosListados, ultimoProductoFecha, cliente, participacionesMes, participaciones90d, resultados90d } = data;
+  const { 
+    productosListados, 
+    ultimoProductoFecha, 
+    cliente, 
+    participacionesMes, 
+    participaciones90d, 
+    ventas90d, // 👈 NUEVO
+    resultados90d 
+  } = data;
 
   let estado: "ok" | "pending" = "pending";
   if (ultimoProductoFecha) {
@@ -244,14 +263,15 @@ export default async function DashboardHomePage() {
             color={estado === "ok" ? "green" : "red"}
             delay="100ms"
           />
-          <StatCard 
-            title="Descuento por mayor" 
-            value="—" 
-            subtitle="(configurar en perfil)"
-            icon="💰"
-            color="yellow"
-            delay="200ms"
-          />
+          {/* 👇 Reemplazo: Ventas últimos 90 días */}
+<StatCard 
+  title="Ventas (aceptadas)"           // 👈 antes decía "Ventas"
+  value={String(ventas90d || 0)} 
+  subtitle="últimos 90 días"
+  icon="🛒"
+  color="yellow"
+  delay="200ms"
+/>
           <StatCard 
             title="Participación" 
             value={String(participaciones90d || 0)} 
@@ -694,38 +714,38 @@ function FeedbackRow({ data }: { data: any }) {
                     data.resultado?.toLowerCase().includes('ganó') ||
                     data.resultado?.toLowerCase().includes('seleccionado');
   
-                    return (
-                      <div className="group p-4 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all duration-200">
-                        <div className="flex items-start gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 ${
-                            isPositive ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'
-                          }`}>
-                            {isPositive ? '✓' : '📋'}
-                          </div>
-                          <div className="flex-1 min-w-0"> {/* ✅ min-w-0 previene overflow */}
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                              <span className="text-xs text-gray-500">{formatDateArg(data.fecha)}</span>
-                              <span className="text-xs font-medium text-[#00152F] bg-gray-50 px-2 py-1 rounded self-start break-words">
-                                {data.proyecto ?? "Sin proyecto"}
-                              </span>
-                            </div>
-                            <div className="mb-1 break-words">
-                              <span className="text-sm font-medium text-gray-900">{data.accion ?? "—"}</span>
-                              <span className="text-gray-400 mx-2 hidden sm:inline">•</span>
-                              <span className={`text-sm font-medium block sm:inline ${isPositive ? 'text-green-600' : 'text-gray-700'}`}>
-                                {data.resultado ?? "—"}
-                              </span>
-                            </div>
-                            {detalle && (
-                              <p className="text-sm text-gray-600 leading-relaxed bg-gray-50/50 p-2 rounded-lg mt-2 break-words">
-                                {detalle}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
+  return (
+    <div className="group p-4 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all duration-200">
+      <div className="flex items-start gap-3">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 ${
+          isPositive ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'
+        }`}>
+          {isPositive ? '✓' : '📋'}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+            <span className="text-xs text-gray-500">{formatDateArg(data.fecha)}</span>
+            <span className="text-xs font-medium text-[#00152F] bg-gray-50 px-2 py-1 rounded self-start break-words">
+              {data.proyecto ?? "Sin proyecto"}
+            </span>
+          </div>
+          <div className="mb-1 break-words">
+            <span className="text-sm font-medium text-gray-900">{data.accion ?? "—"}</span>
+            <span className="text-gray-400 mx-2 hidden sm:inline">•</span>
+            <span className={`text-sm font-medium block sm:inline ${isPositive ? 'text-green-600' : 'text-gray-700'}`}>
+              {data.resultado ?? "—"}
+            </span>
+          </div>
+          {detalle && (
+            <p className="text-sm text-gray-600 leading-relaxed bg-gray-50/50 p-2 rounded-lg mt-2 break-words">
+              {detalle}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ModernSkeleton({ title }: { title: string }) {
   return (
