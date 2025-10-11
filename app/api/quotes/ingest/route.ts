@@ -12,9 +12,7 @@ type N8nItemCompat = {
   filtro?: string | null;
   search?: string | null;
   proveedor_id_filtro?: string | null;
-
   meta?: { total_items?: number | string | null } | null;
-
   resultados: Array<AnyObj>;
 };
 
@@ -65,87 +63,121 @@ function buildComentario(r: AnyObj) {
 }
 
 export async function POST(req: NextRequest) {
-  let payload: unknown;
+  let payload: any;
   try {
     payload = await req.json();
   } catch {
     return NextResponse.json({ ok: false, error: "invalid-json" }, { status: 400 });
   }
 
-  if (!Array.isArray(payload) || payload.length === 0) {
+  // Puede venir { blocks, participation_id } o directamente un array "legacy"
+  const participation_id: string | undefined = payload?.participation_id;
+
+  let blocks: N8nItemCompat[] = [];
+  if (Array.isArray(payload)) {
+    if (payload.length && !("resultados" in (payload[0] as any))) {
+      blocks = [{ q: "", resultados: payload as any[] } as N8nItemCompat];
+    } else {
+      blocks = payload as N8nItemCompat[];
+    }
+  } else if (payload && typeof payload === "object") {
+    if (Array.isArray(payload.blocks)) {
+      blocks = payload.blocks as N8nItemCompat[];
+    } else if (Array.isArray(payload.resultados) || Array.isArray(payload.results)) {
+      blocks = [{
+        q: payload.query ?? payload.q ?? "",
+        resultados: Array.isArray(payload.resultados) ? payload.resultados : (payload.results ?? []),
+      }];
+    }
+  }
+
+  if (!blocks.length) {
     return NextResponse.json({ ok: false, error: "empty-payload" }, { status: 400 });
   }
 
-  let blocks: N8nItemCompat[];
+  // === Derivar IA (tomamos el primer resultado con info IA, si existe) ===
+  const flatResults: AnyObj[] = blocks.flatMap(b => b.resultados || []);
+  const best = flatResults.find(r => pickFirst(r, ["comentario_ia", "ia_comment", "ia_comentario"]) || pickFirst(r, ["sugerencia_regla", "suggestion", "sugerencia"]));
+  const first = flatResults[0];
 
-if (Array.isArray(payload)) {
-  // Caso feliz: puede ser array de blocks o array plano de resultados
-  if (payload.length && !("resultados" in (payload[0] as any))) {
-    // array plano de resultados -> un solo block con query desconocida
-    blocks = [{ q: "", resultados: payload as any[] } as N8nItemCompat];
-  } else {
-    blocks = payload as N8nItemCompat[];
-  }
-} else if (payload && typeof payload === "object") {
-  const obj = payload as any;
-  if (Array.isArray(obj.resultados) || Array.isArray(obj.results)) {
-    blocks = [{
-      q: obj.query ?? obj.q ?? "",
-      resultados: Array.isArray(obj.resultados) ? obj.resultados : (obj.results ?? []),
-    }];
-  } else {
-    // objeto desconocido -> nada
-    blocks = [];
-  }
-} else {
-  blocks = [];
-}
+  const iaComentarioText = s(
+    (best && pickFirst(best, ["comentario_ia", "ia_comment", "ia_comentario"])) ||
+    ""
+  );
+  const sugerenciaNueva = s(
+    (best && pickFirst(best, ["sugerencia_regla", "suggestion", "sugerencia"])) ||
+    ""
+  ) || null;
 
-if (blocks.length === 0) {
-  return NextResponse.json({ ok: false, error: "empty-payload" }, { status: 400 });
-}
-  
-  
+  // Rank (si viene)
+  const rank_pos = (best && pickFirst(best, ["rank", "posicion", "puesto"], x => i(x, null as any))) as number | null
+    ?? (first && pickFirst(first, ["rank", "posicion", "puesto"], x => i(x, null as any))) as number | null
+    ?? null;
+
+  const rank_total = (best && pickFirst(best, ["total_proveedores", "total", "resultado_total", "providers_total", "cant_proveedores"], x => i(x, null as any))) as number | null
+    ?? (first && pickFirst(first, ["total_proveedores", "total", "resultado_total", "providers_total", "cant_proveedores"], x => i(x, null as any))) as number | null
+    ?? null;
+
   const now = new Date();
 
+  // === Si viene participation_id, MERGE directo sobre esa fila ===
+  if (participation_id) {
+    const prev = await prisma.cotizacionParticipacion.findUnique({
+      where: { id: participation_id },
+      select: { comentario: true, sugerencia: true },
+    });
+
+    if (!prev) {
+      // Si la id es inválida, seguimos por la ruta legacy más abajo
+    } else {
+      // Comentario: si hay IA, la ponemos arriba y preservamos lo anterior
+      const comentarioGenerado = first ? buildComentario(first) : "";
+      const comentarioMerged = iaComentarioText
+        ? (prev.comentario ? `IA: ${iaComentarioText}\n\n${prev.comentario}` : `IA: ${iaComentarioText}`)
+        : (prev.comentario || comentarioGenerado || null);
+
+      await prisma.cotizacionParticipacion.update({
+        where: { id: participation_id },
+        data: {
+          fecha: now,
+          accion: "Participación",
+          resultado: rank_pos != null && rank_total != null ? `Participación (Ranking: ${rank_pos}/${rank_total})` : "Participación",
+          comentario: comentarioMerged ?? undefined,
+          sugerencia: sugerenciaNueva ?? prev.sugerencia ?? null,
+          rank_pos,
+          rank_total,
+        },
+      });
+
+      return NextResponse.json({ ok: true, merged: true, touched: 1 });
+    }
+  }
+
+  // === Fallback legacy: vincular por proveedor/proyecto reciente (72h) ===
   let touched = 0;
   await prisma.$transaction(async (tx) => {
     for (const block of blocks) {
-      // Aceptar distintos nombres de “query”
-      const q =
-        s(block.query) ||
-        s(block.q) ||
-        s(block.filtro) ||
-        s(block.search);
+      const q = s(block.query) || s(block.q) || s(block.filtro) || s(block.search);
       if (!q) continue;
-
       const proyectoName = `Cotización: ${q}`;
 
       for (const r of (block.resultados ?? [])) {
-        // Aceptar alias de proveedor_id
         const proveedor_id =
           s(pickFirst(r, ["proveedor_id", "proveedorId", "id_proveedor", "cliente_id", "user_id", "owner_id"]));
         if (!proveedor_id) continue;
 
-        // Rank numérico tolerante
-        const rank_pos = pickFirst(r, ["rank", "posicion", "puesto"], (x) => i(x, null as any)) as number | null;
-        const rank_total = pickFirst(r, ["total_proveedores", "total", "resultado_total", "providers_total", "cant_proveedores"], (x) => i(x, null as any)) as number | null;
+        const r_pos = pickFirst(r, ["rank", "posicion", "puesto"], (x) => i(x, null as any)) as number | null;
+        const r_tot = pickFirst(r, ["total_proveedores", "total", "resultado_total", "providers_total", "cant_proveedores"], (x) => i(x, null as any)) as number | null;
 
-        // Resultado “humano”
-        const resultadoBase = s(
-          pickFirst(r, ["resultado", "status", "state"]) || "Participación"
-        );
-        const rankTxt = rank_pos != null && rank_total != null ? ` (Ranking: ${rank_pos}/${rank_total})` : "";
+        const resultadoBase = s(pickFirst(r, ["resultado", "status", "state"]) || "Participación");
+        const rankTxt = r_pos != null && r_tot != null ? ` (Ranking: ${r_pos}/${r_tot})` : "";
         const resultado = `${resultadoBase}${rankTxt}`.trim();
 
-        // Comentario (prefiere IA)
         const comentarioIa = s(pickFirst(r, ["comentario_ia", "ia_comment", "ia_comentario"]) || "");
         const comentarioGenerado = buildComentario(r);
         const comentarioNuevo = comentarioIa || comentarioGenerado;
+        const sugerenciaNuevaLocal = s(pickFirst(r, ["sugerencia_regla", "suggestion", "sugerencia"]) || "") || null;
 
-        const sugerenciaNueva = s(pickFirst(r, ["sugerencia_regla", "suggestion", "sugerencia"]) || "") || null;
-
-        // Vincular a participación “reciente” (72h) creada por el lab
         const recienteDesde = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 3);
         const prev = await tx.cotizacionParticipacion.findFirst({
           where: {
@@ -158,7 +190,6 @@ if (blocks.length === 0) {
         });
 
         if (prev?.id) {
-          // Merge: si viene IA, la ponemos arriba
           const comentarioMerged = comentarioIa
             ? (prev.comentario ? `IA: ${comentarioIa}\n\n${prev.comentario}` : `IA: ${comentarioIa}`)
             : (prev.comentario ? prev.comentario : comentarioNuevo);
@@ -170,14 +201,13 @@ if (blocks.length === 0) {
               accion: "Participación",
               resultado,
               comentario: comentarioMerged,
-              sugerencia: sugerenciaNueva ?? prev.sugerencia ?? null,
-              rank_pos,
-              rank_total,
+              sugerencia: sugerenciaNuevaLocal ?? prev.sugerencia ?? null,
+              rank_pos: r_pos,
+              rank_total: r_tot,
             },
           });
           touched++;
         } else {
-          // Si no existe, la creamos CONSISTENTE y con comentario
           await tx.cotizacionParticipacion.create({
             data: {
               proveedor_id,
@@ -186,9 +216,9 @@ if (blocks.length === 0) {
               accion: "Participación",
               resultado,
               comentario: comentarioNuevo,
-              sugerencia: sugerenciaNueva,
-              rank_pos,
-              rank_total,
+              sugerencia: sugerenciaNuevaLocal,
+              rank_pos: r_pos,
+              rank_total: r_tot,
             },
           });
           touched++;
@@ -197,5 +227,5 @@ if (blocks.length === 0) {
     }
   });
 
-  return NextResponse.json({ ok: true, touched });
+  return NextResponse.json({ ok: true, merged: false, touched });
 }

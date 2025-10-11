@@ -70,7 +70,7 @@ function normalizeN8nDataToBlocks(raw: any, q: string) {
     }];
   }
   if (Array.isArray(raw) && (raw.length === 0 || typeof raw[0] === "object")) {
-    return [{ query: q,Resultados: undefined, resultados: raw }];
+    return [{ query: q, resultados: raw }];
   }
   return [];
 }
@@ -88,13 +88,14 @@ function sanitize(v: unknown) {
   return String(v ?? "").trim();
 }
 
-/** Dispara tu flujo n8n (opcional). Mantengo firma para reuse. */
+/** Dispara tu flujo n8n (opcional) + envía participation_id para mergear en ingest */
 async function triggerWebhookForProvider(params: {
   proveedor_id: string;
   q: string;
   precio_ofertado?: number | null;
   rank?: number;
   total?: number;
+  participation_id?: string; // 👈 clave para evitar duplicados
 }) {
   const base = getBaseUrl();
 
@@ -102,7 +103,7 @@ async function triggerWebhookForProvider(params: {
   const r1 = await fetch(`${base}/api/quotes/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify(params), // viaja participation_id
     cache: "no-store",
   });
   if (!r1.ok) throw new Error(`refresh failed ${r1.status}`);
@@ -113,11 +114,11 @@ async function triggerWebhookForProvider(params: {
   const blocks = normalizeN8nDataToBlocks(j1.data, params.q);
   if (!blocks.length) return { ok: true, ingested: 0 };
 
-  // 3) Ingesta como array de blocks
+  // 3) Ingesta mergeando sobre la participación creada/actualizada
   const r2 = await fetch(`${base}/api/quotes/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(blocks),
+    body: JSON.stringify({ blocks, participation_id: params.participation_id }),
     cache: "no-store",
   });
   if (!r2.ok) {
@@ -134,13 +135,8 @@ async function triggerWebhookForProvider(params: {
 
 /**
  * Acción MASIVA: notificar a los proveedores listados (crear/actualizar feedback)
- * - Crea/actualiza registros en `cotizacionParticipacion`:
- *   proyecto = "Cotización: {q}"
- *   accion   = "Participación"
- *   resultado= "Posición {rank} de {total}"
- *   rank_pos / rank_total
- *   comentario = "Producto: … • Código: … • Precio: …"
- * - Dispara n8n (best-effort)
+ * - Crea/actualiza registros en `cotizacionParticipacion`
+ * - Dispara n8n y el ingest MERGEA usando participation_id
  * - Empuja a RecentSuggestion con FIFO cap 10
  */
 export async function notifyFromQuery(formData: FormData) {
@@ -151,9 +147,7 @@ export async function notifyFromQuery(formData: FormData) {
   const limitRaw = Number(sanitize(formData.get("limit")) || 10);
   const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 10, 1), 50);
 
-  if (!q) {
-    redirect(`/dashboard/lab/quote?sent=0`);
-  }
+  if (!q) redirect(`/dashboard/lab/quote?sent=0`);
 
   // 1) Repetimos la búsqueda server-side para garantizar consistencia
   const productos = await prisma.producto.findMany({
@@ -201,8 +195,18 @@ export async function notifyFromQuery(formData: FormData) {
   const proyectoName = `Cotización: ${q}`;
   const now = new Date();
 
-  // 4) Crea/actualiza participaciones para los que se notifican (limit)
+  // 4) Crear/actualizar participaciones para los que se notifican (limit)
   const topList = ranked.slice(0, limit);
+
+  // Guardamos referencias para pasar participation_id al webhook
+  const participationRefs: Array<{
+    proveedor_id: string;
+    participation_id: string;
+    precio: number;
+    rank: number;
+    total: number;
+    comentario: string;
+  }> = [];
 
   await prisma.$transaction(async (tx) => {
     for (const t of topList) {
@@ -210,7 +214,9 @@ export async function notifyFromQuery(formData: FormData) {
         `Producto: ${t.descripcion || q}`,
         `Código: ${t.codigo_interno ?? "N/D"}`,
         Number.isFinite(t.precio_actual) ? `Precio: $${t.precio_actual.toLocaleString("es-AR")}` : null,
-      ].filter(Boolean).join(" • ");
+      ]
+        .filter(Boolean)
+        .join(" • ");
 
       // Si existe algo muy reciente para este proveedor y proyecto, lo actualizo
       const prev = await tx.cotizacionParticipacion.findFirst({
@@ -223,6 +229,8 @@ export async function notifyFromQuery(formData: FormData) {
         select: { id: true },
       });
 
+      let participation_id: string;
+
       if (prev?.id) {
         await tx.cotizacionParticipacion.update({
           where: { id: prev.id },
@@ -230,56 +238,63 @@ export async function notifyFromQuery(formData: FormData) {
             fecha: now,
             accion: "Participación",
             resultado: `Posición ${t.rank} de ${t.total}`,
-            comentario,
+            comentario, // base
             rank_pos: t.rank,
             rank_total: t.total,
           },
         });
+        participation_id = prev.id;
       } else {
-        await tx.cotizacionParticipacion.create({
+        const created = await tx.cotizacionParticipacion.create({
           data: {
             proveedor_id: t.proveedor_id,
             fecha: now,
             proyecto: proyectoName,
             accion: "Participación",
             resultado: `Posición ${t.rank} de ${t.total}`,
-            comentario,
+            comentario, // base
             rank_pos: t.rank,
             rank_total: t.total,
             sugerencia: null,
           },
+          select: { id: true },
         });
+        participation_id = created.id;
       }
+
+      participationRefs.push({
+        proveedor_id: t.proveedor_id,
+        participation_id,
+        precio: t.precio_actual,
+        rank: t.rank,
+        total: t.total,
+        comentario,
+      });
     }
   });
 
-  // 5) Best-effort: disparo n8n y empujo a Sugerencias (FIFO) en paralelo
+  // 5) Disparo n8n (con participation_id) y empujo a Sugerencias (FIFO) en paralelo
   await Promise.allSettled([
-    ...topList.map((t) =>
+    ...participationRefs.map((ref) =>
       triggerWebhookForProvider({
-        proveedor_id: t.proveedor_id,
+        proveedor_id: ref.proveedor_id,
         q,
-        precio_ofertado: t.precio_actual,
-        rank: t.rank,
-        total: t.total,
+        precio_ofertado: ref.precio,
+        rank: ref.rank,
+        total: ref.total,
+        participation_id: ref.participation_id, // 👈 evita duplicados
       })
     ),
-    ...topList.map((t) => {
-      const comentario = [
-        `Producto: ${t.descripcion || q}`,
-        `Código: ${t.codigo_interno ?? "N/D"}`,
-        Number.isFinite(t.precio_actual) ? `Precio: $${t.precio_actual.toLocaleString("es-AR")}` : null,
-      ].filter(Boolean).join(" • ");
-
+    ...participationRefs.map((ref) => {
       const sugerenciaTexto =
-        `Participaste en ${proyectoName} — quedaste ${t.rank}/${t.total}. ` +
-        (Number.isFinite(t.precio_actual) ? `Precio: $${t.precio_actual.toLocaleString("es-AR")}. ` : "") +
+        `Participaste en ${proyectoName} — quedaste ${ref.rank}/${ref.total}. ` +
+        (Number.isFinite(ref.precio) ? `Precio: $${ref.precio.toLocaleString("es-AR")}. ` : "") +
         `Revisá precio/stock para mejorar tu posición.`;
 
       return pushRecentSuggestion({
-        proveedor_id: t.proveedor_id,
+        proveedor_id: ref.proveedor_id,
         proyecto: proyectoName,
-        comentario,
+        comentario: ref.comentario,
         sugerencia: sugerenciaTexto,
       });
     }),
@@ -296,9 +311,6 @@ export async function notifyFromQuery(formData: FormData) {
 
 /**
  * Acción POR FILA: adjudicar al ganador e iniciar el chat 1–a–1
- * - Upsert de participación "Aceptado"
- * - Intento de crear/abrir chat si existen tablas
- * - Empuja a Sugerencias (FIFO cap 10)
  */
 export async function awardAndOpenChat(formData: FormData) {
   const session = await getServerSession(authOptions);
@@ -310,7 +322,6 @@ export async function awardAndOpenChat(formData: FormData) {
 
   const proveedor_id = String(formData.get("proveedor_id") || "");
   const q = String(formData.get("q") || "");
-  const id_producto = String(formData.get("id_producto") || "");
   const codigo = String(formData.get("codigo_interno") || "");
   const descripcion = String(formData.get("descripcion") || "");
   const precio = Number(formData.get("precio_actual") || 0);
@@ -409,7 +420,7 @@ export async function awardAndOpenChat(formData: FormData) {
           conversationId: conversation.id,
           senderId: adminClienteId,
           body: [
-            `Hola! Esta cotización fue *seleccionada*.`,
+            `¡Hola! Esta cotización fue *seleccionada*.`,
             ``,
             `**Detalle**`,
             `• Producto: ${descripcion || q}`,
