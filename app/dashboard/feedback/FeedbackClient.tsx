@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -38,64 +38,51 @@ function extractDescAndCode(comentario?: string, fallbackProyecto?: string) {
 }
 const clean = (t?: string) => (t ?? "").replace(/simulada/ig, "").trim();
 
-/** Devuelve solo el párrafo final del comentario.
- *  - Si encuentra "Producto:", muestra desde su última aparición hasta el final.
- *  - Si no, toma el último bloque separado por saltos dobles.
- */
+/** Devuelve solo el párrafo final del comentario. */
 function commentBottomOnly(text?: string) {
   const raw = (text ?? "").trim();
   if (!raw) return raw;
 
   const lower = raw.toLowerCase();
   const lastProducto = lower.lastIndexOf("producto:");
-  if (lastProducto >= 0) {
-    return raw.slice(lastProducto).trim();
-  }
+  if (lastProducto >= 0) return raw.slice(lastProducto).trim();
 
-  // Si no hay "Producto:", quedate con el último párrafo (separado por líneas en blanco)
   const parts = raw.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : raw;
 }
 
-/** Intenta extraer "P/T" desde resultado o comentario (2/10, posición 2 de 10, puesto 2 sobre 10, etc.) */
+/** Intenta extraer "P/T" desde resultado o comentario (2/10, posición 2 de 10, etc.) */
 function extractRankShort(resultado?: string, comentario?: string) {
   const candidates = [resultado ?? "", comentario ?? ""];
   for (const raw of candidates) {
     const t = (raw || "").toLowerCase();
 
-    // 1) Formato directo: "2/10"
     let m = t.match(/(\d+)\s*\/\s*(\d+)/);
     if (m) return `${m[1]}/${m[2]}`;
 
-    // 2) "posición 2 de 10", "posicion 2 de 10"
     m = t.match(/posici(?:ó|o)n\s+(\d+)\s+(?:de|sobre)\s+(\d+)/i);
     if (m) return `${m[1]}/${m[2]}`;
 
-    // 3) "puesto 2 de 10" / "puesto 2 sobre 10"
     m = t.match(/puesto\s+(\d+)\s+(?:de|sobre)\s+(\d+)/i);
     if (m) return `${m[1]}/${m[2]}`;
 
-    // 4) "ranking: 2/10", "rank 2/10", "ranking 2 de 10"
     m = t.match(/rank(?:ing)?[:=]?\s*(\d+)\s*(?:\/|\bde\b|\bsobre\b)\s*(\d+)/i);
     if (m) return `${m[1]}/${m[2]}`;
 
-    // 5) "quedaste 2 de 10" / "quedó 2 de 10"
     m = t.match(/qued(?:a|o|aste)\s+(\d+)\s+(?:de|sobre)\s+(\d+)/i);
     if (m) return `${m[1]}/${m[2]}`;
   }
   return null;
 }
 
-/** Badge neutral para números de ranking tipo "2/10" */
 function rankBadgeClass() {
-  return "bg-[#efefef] text-[#00152F] ring-1 ring-[#00152F]/20";
+  return "bg-[#efefef] text-[#00152F] ring-1 ring-[#00152F]/20 rounded-full px-2 py-0.5 text-xs";
 }
 
 /* ========================================================== */
 
-/** Bloque para comentario con scroll interno si supera el alto máximo */
 function CommentCell({ text, sugerencia }: { text?: string; sugerencia?: string }) {
-  const comentario = commentBottomOnly(text); // ⬅️ acá
+  const comentario = commentBottomOnly(text);
   if (!comentario) return <span className="text-slate-400">-</span>;
 
   return (
@@ -103,9 +90,7 @@ function CommentCell({ text, sugerencia }: { text?: string; sugerencia?: string 
       <div
         className={[
           "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
-          "whitespace-pre-wrap break-words",
-          "overflow-y-auto pr-2",
-          "max-h-40 md:max-h-56",
+          "whitespace-pre-wrap break-words overflow-y-auto pr-2 max-h-40 md:max-h-56",
         ].join(" ")}
       >
         {comentario}
@@ -120,7 +105,6 @@ function CommentCell({ text, sugerencia }: { text?: string; sugerencia?: string 
   );
 }
 
-
 export default function FeedbackClient({
   rows,
   metrics,
@@ -129,7 +113,6 @@ export default function FeedbackClient({
   metrics: FeedbackMetrics;
 }) {
   const title = "Métricas resumidas";
-
   const suggestions = useMemo(
     () => rows.filter((r) => r.sugerencia && r.sugerencia.trim().length > 0),
     [rows]
@@ -193,19 +176,12 @@ export default function FeedbackClient({
                 const display = rank ?? resultadoLimpio;
 
                 return (
-                  <tr
-                    key={r.id}
-                    className="transition-colors"
-                    style={{ borderTop: `1px solid ${AZUL}1A` }}
-                  >
+                  <tr key={r.id} className="transition-colors" style={{ borderTop: `1px solid ${AZUL}1A` }}>
                     <Td>{format(new Date(r.fecha), "dd/MM/yyyy", { locale: es })}</Td>
-
                     <Td className="font-medium text-slate-700">
                       {extractDescAndCode(r.comentario, proyectoLimpio)}
                     </Td>
-
                     <Td className="text-slate-600">{accionLimpia}</Td>
-
                     <Td>
                       <span
                         className={[
@@ -217,7 +193,6 @@ export default function FeedbackClient({
                         {display || "-"}
                       </span>
                     </Td>
-
                     <Td className="text-slate-700">
                       <CommentCell text={r.comentario} sugerencia={r.sugerencia} />
                     </Td>
@@ -262,10 +237,7 @@ export default function FeedbackClient({
 function MetricItem({ label, value }: { label: string; value: string }) {
   const AZUL = "#00152F";
   return (
-    <div
-      className="rounded-xl p-4"
-      style={{ backgroundColor: "white", border: `1px solid ${AZUL}33` }}
-    >
+    <div className="rounded-xl p-4" style={{ backgroundColor: "white", border: `1px solid ${AZUL}33` }}>
       <div className="text-[13px]" style={{ color: `${AZUL}B3` }}>
         {label}
       </div>

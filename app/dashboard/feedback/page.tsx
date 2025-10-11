@@ -1,4 +1,3 @@
-// app/dashboard/feedback/page.tsx
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -18,20 +17,12 @@ const MAX_BTNS = 5;
 
 /* ==================== Helpers visuales ==================== */
 
-/** Devuelve solo el párrafo final del comentario.
- *  - Si encuentra "Producto:", muestra desde su última aparición hasta el final.
- *  - Si no, toma el último bloque separado por saltos dobles.
- */
 function commentBottomOnly(text?: string) {
   const raw = (text ?? "").trim();
   if (!raw) return raw;
-
   const lower = raw.toLowerCase();
   const lastProducto = lower.lastIndexOf("producto:");
-  if (lastProducto >= 0) {
-    return raw.slice(lastProducto).trim();
-  }
-
+  if (lastProducto >= 0) return raw.slice(lastProducto).trim();
   const parts = raw.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : raw;
 }
@@ -48,29 +39,21 @@ function extractDescAndCode(comentario?: string, fallbackProyecto?: string) {
 
 function extractRankShortStrict(text?: string) {
   const t = (text || "").toLowerCase();
-
-  // 1) "posición 2 de 10" / "puesto 3 sobre 12"
   let m =
     t.match(/posici(?:ó|o)n\s+(\d+)\s+(?:de|sobre)\s+(\d+)/i) ||
     t.match(/puesto\s+(\d+)\s+(?:de|sobre)\s+(\d+)/i);
   if (m) return `${m[1]}/${m[2]}`;
-
-  // 2) "rank 2/10", "ranking: 2/10", "probable(rank1/1)"
   m = t.match(/rank(?:ing)?[:=]?\s*\(?\s*(\d+)\s*\/\s*(\d+)\s*\)?/i);
   if (m) return `${m[1]}/${m[2]}`;
-
-  // 3) Cualquier "2/10" suelto evitando fechas (01/10/2025)
   const all = [...t.matchAll(/(\d+)\s*\/\s*(\d+)/g)];
   for (const mm of all) {
     const after = t.slice((mm.index ?? 0) + mm[0].length);
     const hasAnotherSlashSoon = /^\s*\/\s*\d{1,4}/.test(after);
     if (!hasAnotherSlashSoon) return `${mm[1]}/${mm[2]}`;
   }
-
   return null;
 }
 
-/** Badge neutral para "P/T" */
 function rankBadgeClass() {
   return "inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700";
 }
@@ -111,6 +94,14 @@ type FeedbackMetrics = {
   pendientesEvaluacion: number;
 };
 
+type RecentSuggestion = {
+  id: string;
+  created_at: Date;
+  proyecto: string | null;
+  comentario: string | null;
+  sugerencia: string;
+};
+
 /** Construye URL con page/pageSize preservando otros query params */
 function pageUrl(baseSearchParams: Record<string, string | undefined>, page: number, pageSize: number) {
   const sp = new URLSearchParams();
@@ -138,50 +129,29 @@ function formatRankFromRow(row: FeedbackRow) {
   return extractRankShortStrict(row.resultado) || extractRankShortStrict(row.comentario);
 }
 
-/* ==================== Badge resultado ==================== */
-function StatusBadge({ resultado }: { resultado: string }) {
-  const onlyRank = extractRankShortStrict(resultado);
+/** Clasifica el % de participación */
+function classifyParticipation(pct: number) {
+  if (pct > 65) return { label: "Buena", badge: "bg-emerald-500/20 border-emerald-300/30 text-emerald-100" };
+  if (pct >= 35) return { label: "Regular", badge: "bg-yellow-500/20 border-yellow-300/30 text-yellow-100" };
+  return { label: "Mala", badge: "bg-rose-500/20 border-rose-300/30 text-rose-100" };
+}
 
-  if (onlyRank) {
-    return <span className={rankBadgeClass()}>{onlyRank}</span>;
+/** Carga defensiva de recent suggestions: si el modelo no existe, devuelve [] */
+async function getRecentSuggestionsSafe(proveedorId: string): Promise<RecentSuggestion[]> {
+  const anyPrisma = prisma as any;
+  try {
+    if (anyPrisma?.recentSuggestion?.findMany) {
+      const out = (await anyPrisma.recentSuggestion.findMany({
+        where: { proveedor_id: String(proveedorId) },
+        orderBy: { created_at: "desc" },
+        take: 10,
+      })) as RecentSuggestion[];
+      return out ?? [];
+    }
+  } catch {
+    // ignore y continuar vacío
   }
-
-  const r = (resultado || "").toLowerCase();
-
-  if (r.includes("acept")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
-        {resultado}
-      </span>
-    );
-  }
-  if (r.includes("no seleccion")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-yellow-200 bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800">
-        {resultado}
-      </span>
-    );
-  }
-  if (r.includes("evalu")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">
-        {resultado}
-      </span>
-    );
-  }
-  if (r.includes("rechaz")) {
-    return (
-      <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-800">
-        {resultado}
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-      {resultado}
-    </span>
-  );
+  return [];
 }
 
 export default async function HistorialPage({
@@ -192,10 +162,8 @@ export default async function HistorialPage({
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
-  // ✅ Next 15: await params
   const sp = await searchParams;
 
-  // ✅ Definí proveedorId (string) a partir de la sesión
   const proveedorId = String(
     (session.user as any)?.id ??
       (session.user as any)?.id_cliente ??
@@ -203,25 +171,19 @@ export default async function HistorialPage({
       (session.user as any)?.user_id ??
       (session.user as any)?.cliente_id ??
       (session.user as any)?.proveedor_id ??
-      (session.user as any)?.id_cliente ??
-      (session.user as any)?.id ??
       ""
   );
 
-  // --- Parámetros de paginación ---
   const pageParamRaw = Array.isArray(sp.page) ? sp.page[0] : sp.page;
   const pageSizeParamRaw = Array.isArray(sp.pageSize) ? sp.pageSize[0] : sp.pageSize;
 
   const PAGE_SIZE = Math.max(1, Math.min(100, Number(pageSizeParamRaw) || PAGE_SIZE_DEFAULT));
   const page = Math.max(1, Number(pageParamRaw) || 1);
 
-  // --- Totales para paginación ---
   const totalItems = await prisma.cotizacionParticipacion.count({
     where: { proveedor_id: String(proveedorId) },
   });
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
-
-  // Corrige page si viene fuera de rango
   const safePage = Math.min(page, totalPages);
   const skip = (safePage - 1) * PAGE_SIZE;
 
@@ -230,7 +192,7 @@ export default async function HistorialPage({
   let aceptadasCount = 0;
 
   try {
-    const [events, metricsRow] = await Promise.all([
+    const [events, metricsRow, lastEvent, recentSuggestions] = await Promise.all([
       prisma.cotizacionParticipacion.findMany({
         where: { proveedor_id: String(proveedorId) },
         orderBy: { fecha: "desc" },
@@ -242,7 +204,6 @@ export default async function HistorialPage({
           resultado: true,
           comentario: true,
           sugerencia: true,
-          // NUEVO:
           rank_pos: true,
           rank_total: true,
         },
@@ -253,6 +214,12 @@ export default async function HistorialPage({
         where: { proveedor_id: String(proveedorId) },
         orderBy: { fecha: "desc" },
       }),
+      prisma.cotizacionParticipacion.findFirst({
+        where: { proveedor_id: String(proveedorId) },
+        orderBy: { fecha: "desc" },
+        select: { fecha: true },
+      }),
+      getRecentSuggestionsSafe(proveedorId),
     ]);
 
     const clean = (txt?: string | null) => (txt ?? "").replace(/simulada/gi, "").trim();
@@ -269,7 +236,6 @@ export default async function HistorialPage({
       rank_total: r.rank_total ?? null,
     }));
 
-    // Métricas
     if (metricsRow) {
       metrics = {
         totalParticipaciones: metricsRow.total_participaciones,
@@ -277,7 +243,7 @@ export default async function HistorialPage({
         pctAceptacion: metricsRow.pct_aceptacion,
         promedioCalificacion: metricsRow.promedio_calificacion,
         tiempoPromedioEntregaDias: metricsRow.tiempo_prom_entrega_dias,
-        ultimaParticipacion: rows[0]?.fecha,
+        ultimaParticipacion: lastEvent?.fecha?.toISOString(),
         pendientesEvaluacion: metricsRow.pendientes_evaluacion,
       };
     } else {
@@ -290,7 +256,7 @@ export default async function HistorialPage({
         pctAceptacion: totalItems ? Math.round((aceptadasEnPagina / totalItems) * 100) : 0,
         promedioCalificacion: 0,
         tiempoPromedioEntregaDias: 0,
-        ultimaParticipacion: rows[0]?.fecha,
+        ultimaParticipacion: lastEvent?.fecha?.toISOString(),
         pendientesEvaluacion: enEvaluacion,
       };
     }
@@ -301,299 +267,281 @@ export default async function HistorialPage({
         resultado: { contains: "acept", mode: "insensitive" },
       },
     });
-  } catch {
-    rows = [];
-    metrics = {
-      totalParticipaciones: 0,
-      pctRespuestaATiempo: 0,
-      pctAceptacion: 0,
-      promedioCalificacion: 0,
-      tiempoPromedioEntregaDias: 0,
-      ultimaParticipacion: undefined,
-      pendientesEvaluacion: 0,
+
+    // === Participación últimos 30 días ===
+    const now = new Date();
+    const last30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const totalProyectos30 = await prisma.cotizacionParticipacion.findMany({
+      where: {
+        fecha: { gte: last30 },
+        proyecto: { startsWith: "Cotización:" },
+      },
+      select: { proyecto: true },
+      distinct: ["proyecto"],
+    });
+    const totalCotizaciones = totalProyectos30.filter(p => (p.proyecto ?? "").trim() !== "").length;
+
+    const participacionesProveedor = await prisma.cotizacionParticipacion.findMany({
+      where: {
+        proveedor_id: String(proveedorId),
+        fecha: { gte: last30 },
+        proyecto: { startsWith: "Cotización:" },
+      },
+      select: { proyecto: true },
+      distinct: ["proyecto"],
+    });
+    const totalParticipacionesProveedor = participacionesProveedor.filter(p => (p.proyecto ?? "").trim() !== "").length;
+
+    const denom = Math.max(1, totalCotizaciones);
+    const pctParticipacion30 = Math.round((totalParticipacionesProveedor / denom) * 100);
+    const partClass = classifyParticipation(pctParticipacion30);
+
+    const startIdx = totalItems === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+    const endIdx = Math.min(safePage * PAGE_SIZE, totalItems);
+
+    const baseParams: Record<string, string | undefined> = {
+      page: String(page),
+      pageSize: String(PAGE_SIZE),
     };
-  }
 
-  const suggestions = rows.filter((r) => (r.sugerencia ?? "").trim().length > 0);
+    return (
+      <div className="min-h-screen p-4 md:p-6">
+        <div className="mx-auto max-w-7xl">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-4xl font-bold text-slate-800 tracking-tight">
+              HISTORIAL DE COTIZACIONES
+            </h1>
+          </div>
 
-  const startIdx = totalItems === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
-  const endIdx = Math.min(safePage * PAGE_SIZE, totalItems);
-  const nums = numberedPages(safePage, totalPages);
-
-  const baseParams: Record<string, string | undefined> = {
-    page: String(page),
-    pageSize: String(PAGE_SIZE),
-  };
-
-  return (
-    <div className="min-h-screen p-4 md:p-6">
-      <div className="mx-auto max-w-7xl">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-slate-800 tracking-tight">
-            HISTORIAL DE COTIZACIONES
-          </h1>
-        </div>
-
-        {/* Tarjeta de actividad reciente */}
-        <div className="mb-8">
-          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#00152F] to-[#001a3d] shadow-xl">
-            <div className="absolute inset-0 bg-[url('/mining-pattern.png')] opacity-10"></div>
-            <div className="relative flex flex-col lg:flex-row items-center p-8 lg:p-10">
-              <div className="flex-1 text-white space-y-4 lg:pr-8">
-                <div className="mb-6 flex items-center space-x-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
-                    <svg className="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
+          {/* Tarjeta de actividad reciente */}
+          <div className="mb-8">
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#00152F] to-[#001a3d] shadow-xl">
+              <div className="absolute inset-0 bg-[url('/mining-pattern.png')] opacity-10"></div>
+              <div className="relative flex flex-col lg:flex-row items-center p-8 lg:p-10">
+                <div className="flex-1 text-white space-y-4 lg:pr-8">
+                  <div className="mb-6 flex items-center space-x-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+                      <svg className="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <h2 className="text-2xl font-bold text-yellow-300">
+                      ACTIVIDAD RECIENTE:
+                    </h2>
                   </div>
-                  <h2 className="text-2xl font-bold text-yellow-300">
-                    ACTIVIDAD RECIENTE:
-                  </h2>
-                </div>
 
-                <div className="grid grid-cols-1 gap-6 text-lg sm:grid-cols-2">
-                  <div>
-                    <div className="mb-1 font-semibold">Última Participación:</div>
-                    <div className="text-blue-100">
-                      {metrics.ultimaParticipacion
-                        ? format(new Date(metrics.ultimaParticipacion), "dd MMMM yyyy", { locale: es })
-                        : "Sin participaciones"}
+                  <div className="grid grid-cols-1 gap-6 text-lg sm:grid-cols-2">
+                    <div>
+                      <div className="mb-1 font-semibold">Última Participación:</div>
+                      <div className="text-blue-100">
+                        {metrics.ultimaParticipacion
+                          ? format(new Date(metrics.ultimaParticipacion), "dd MMMM yyyy", { locale: es })
+                          : "Sin participaciones"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="mb-1 font-semibold">Total Participaciones:</div>
+                      <div className="text-blue-100">{metrics.totalParticipaciones} Cotizaciones</div>
+                    </div>
+
+                    <div>
+                      <div className="mb-1 font-semibold">Ofertas Aceptadas:</div>
+                      <div className="text-blue-100">
+                        {aceptadasCount} Aceptadas ({metrics.pctAceptacion}%)
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="mb-1 font-semibold">Participación (30 días):</div>
+                      <div className="text-blue-100 flex items-center gap-2">
+                        <span className={["inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold", partClass.badge].join(" ")}>
+                          {partClass.label}
+                        </span>
+                        <span className="opacity-90">{pctParticipacion30}%</span>
+                      </div>
                     </div>
                   </div>
-
-                  <div>
-                    <div className="mb-1 font-semibold">Total Participaciones:</div>
-                    <div className="text-blue-100">{metrics.totalParticipaciones} Cotizaciones</div>
-                  </div>
-
-                  <div>
-                    <div className="mb-1 font-semibold">Ofertas Aceptadas:</div>
-                    <div className="text-blue-100">
-                      {aceptadasCount} Aceptadas ({metrics.pctAceptacion}%)
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="mb-1 font-semibold">Pendientes / En Evaluación:</div>
-                    <div className="text-blue-100">{metrics.pendientesEvaluacion} En Evaluación</div>
-                  </div>
                 </div>
-              </div>
 
-              {/* Imagen */}
-              <div className="mt-8 lg:mt-0 lg:flex-shrink-0">
-                <div className="relative h-48 w-72 overflow-hidden rounded-2xl bg-white/10 shadow-2xl backdrop-blur-sm lg:h-52 lg:w-80">
-                  <Image src={History} alt="Estadísticas" fill priority className="object-cover" />
+                <div className="mt-8 lg:mt-0 lg:flex-shrink-0">
+                  <div className="relative h-48 w-72 overflow-hidden rounded-2xl bg-white/10 shadow-2xl backdrop-blur-sm lg:h-52 lg:w-80">
+                    <Image src={History} alt="Estadísticas" fill priority className="object-cover" />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Tabla de historial */}
-        <div className="overflow-hidden rounded-3xl border border-slate-200/50 bg-white shadow-xl">
-          <div className="border-b border-yellow-600/20 bg-gradient-to-r from-yellow-400 to-yellow-500 px-8 py-6 flex items-center justify-between">
-            <h3 className="text-2xl font-bold text-slate-800">HISTORIAL DE COTIZACIONES</h3>
-            <div className="text-xs text-slate-700">
-              Mostrando <span className="font-semibold">{startIdx}</span>–<span className="font-semibold">{endIdx}</span> de{" "}
-              <span className="font-semibold">{totalItems}</span>
+          {/* Tabla de historial */}
+          <div className="overflow-hidden rounded-3xl border border-slate-200/50 bg-white shadow-xl">
+            <div className="border-b border-yellow-600/20 bg-gradient-to-r from-yellow-400 to-yellow-500 px-8 py-6 flex items-center justify-between">
+              <h3 className="text-2xl font-bold text-slate-800">HISTORIAL DE COTIZACIONES</h3>
+              <div className="text-xs text-slate-700">
+                Mostrando <span className="font-semibold">{startIdx}</span>–<span className="font-semibold">{endIdx}</span> de{" "}
+                <span className="font-semibold">{totalItems}</span>
+              </div>
             </div>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b border-slate-200 bg-slate-50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">
-                    Fecha
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">
-                    Proyecto / Solicitud
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">
-                    Rol / Acción
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">
-                    Resultado
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">
-                    Feedback
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map((row, index) => {
-                  const comentarioLimpio = commentBottomOnly(row.comentario);
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="border-b border-slate-200 bg-slate-50">
+                  <tr>
+                    <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">Fecha</th>
+                    <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">Proyecto / Solicitud</th>
+                    <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">Rol / Acción</th>
+                    <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">Resultado</th>
+                    <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-slate-700">Feedback</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map((row, index) => {
+                    const comentarioLimpio = commentBottomOnly(row.comentario);
+                    return (
+                      <tr key={row.id} className={`transition-colors hover:bg-slate-50/50 ${index % 2 === 0 ? "bg-white" : "bg-slate-25"}`}>
+                        <td className="px-6 py-5 whitespace-nowrap text-sm font-medium text-slate-900">
+                          {format(new Date(row.fecha), "dd/MM/yyyy", { locale: es })}
+                        </td>
+                        <td className="px-6 py-5 text-sm font-medium text-slate-700">
+                          {extractDescAndCode(row.comentario, row.proyecto)}
+                        </td>
+                        <td className="px-6 py-5 text-sm text-slate-600">{row.accion}</td>
+                        <td className="px-6 py-5 whitespace-nowrap">
+                          {(() => {
+                            const rankDisplay = formatRankFromRow(row);
+                            if (rankDisplay) return <span className={rankBadgeClass()}>{rankDisplay}</span>;
+                            const r = (row.resultado || "").toLowerCase();
+                            const cls =
+                              r.includes("acept") ? "border-emerald-200 bg-emerald-100 text-emerald-800" :
+                              r.includes("no seleccion") ? "border-yellow-200 bg-yellow-100 text-yellow-800" :
+                              r.includes("eval") ? "border-blue-200 bg-blue-100 text-blue-800" :
+                              r.includes("rechaz") ? "border-rose-200 bg-rose-100 text-rose-800" :
+                              "border-slate-200 bg-slate-100 text-slate-700";
+                            return <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${cls}`}>{row.resultado}</span>;
+                          })()}
+                        </td>
+                        <td className="px-6 py-5 text-sm text-slate-700">
+                          {comentarioLimpio ? (
+                            <div className="rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed whitespace-pre-wrap overflow-y-auto pr-2 max-h-40 md:max-h-56">
+                              {comentarioLimpio}
+                            </div>
+                          ) : (
+                            <div className="text-slate-400">-</div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
 
-                  return (
-                    <tr
-                      key={row.id}
-                      className={`transition-colors hover:bg-slate-50/50 ${
-                        index % 2 === 0 ? "bg-white" : "bg-slate-25"
-                      }`}
-                    >
-                      {/* Fecha */}
-                      <td className="px-6 py-5 whitespace-nowrap text-sm font-medium text-slate-900">
-                        {format(new Date(row.fecha), "dd/MM/yyyy", { locale: es })}
-                      </td>
-
-                      {/* Proyecto / Solicitud = Descripción - Código */}
-                      <td className="px-6 py-5 text-sm font-medium text-slate-700">
-                        {extractDescAndCode(row.comentario, row.proyecto)}
-                      </td>
-
-                      {/* Acción */}
-                      <td className="px-6 py-5 text-sm text-slate-600">{row.accion}</td>
-
-                      {/* Resultado (prioriza rank numérico) */}
-                      <td className="px-6 py-5 whitespace-nowrap">
-                        {(() => {
-                          const rankDisplay = formatRankFromRow(row);
-                          if (rankDisplay) {
-                            return <span className={rankBadgeClass()}>{rankDisplay}</span>;
-                          }
-                          return <StatusBadge resultado={row.resultado} />;
-                        })()}
-                      </td>
-
-                      {/* Comentario con scroll interno (solo el párrafo final) */}
-                      <td className="px-6 py-5 text-sm text-slate-700">
-                        {comentarioLimpio ? (
-                          <div
-                            className={[
-                              "rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed",
-                              "whitespace-pre-wrap break-words",
-                              "overflow-y-auto pr-2",
-                              "max-h-40 md:max-h-56",
-                            ].join(" ")}
-                          >
-                            {comentarioLimpio}
-                          </div>
-                        ) : (
-                          <div className="text-slate-400">-</div>
-                        )}
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                        <div className="flex flex-col items-center space-y-3">
+                          <svg className="h-12 w-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          <div className="text-lg font-medium">Aún no hay participaciones registradas para tu cuenta</div>
+                        </div>
                       </td>
                     </tr>
-                  );
-                })}
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
-                      <div className="flex flex-col items-center space-y-3">
-                        <svg className="h-12 w-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        <div className="text-lg font-medium">Aún no hay participaciones registradas para tu cuenta</div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            {/* Paginador */}
+            {totalItems > 0 && (
+              <Paginator
+                page={safePage}
+                totalPages={totalPages}
+                pageSize={PAGE_SIZE}
+                totalItems={totalItems}
+                baseParams={{ page: String(page), pageSize: String(PAGE_SIZE) }}
+              />
+            )}
           </div>
 
-          {/* Paginador estilo Ventas (server-side con links) */}
-          {totalItems > 0 && (
-            <div className="px-6 py-4 flex flex-col sm:flex-row gap-3 sm:gap-0 items-center justify-between bg-gray-50 border-t">
-              <span className="text-sm text-gray-600">
-                Página <strong>{safePage}</strong> de <strong>{totalPages}</strong> ·&nbsp;Mostrando{" "}
-                <strong>{rows.length}</strong> de <strong>{totalItems}</strong>
-              </span>
-
-              <div className="flex items-center gap-1">
-                <Link
-                  href={pageUrl(baseParams, 1, PAGE_SIZE)}
-                  aria-disabled={safePage === 1}
-                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
-                    safePage === 1 ? "pointer-events-none opacity-50" : "hover:bg-white"
-                  }`}
-                  style={{ color: AZUL }}
-                >
-                  <span className="hidden sm:inline">Primera</span>
-                </Link>
-
-                <Link
-                  href={pageUrl(baseParams, Math.max(1, safePage - 1), PAGE_SIZE)}
-                  aria-disabled={safePage === 1}
-                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
-                    safePage === 1 ? "pointer-events-none opacity-50" : "hover:bg-white"
-                  }`}
-                  style={{ color: AZUL }}
-                >
-                  <span className="hidden sm:inline">Anterior</span>
-                </Link>
-
-                {nums.map((n) => (
-                  <Link
-                    key={n}
-                    href={pageUrl(baseParams, n, PAGE_SIZE)}
-                    aria-current={n === safePage ? "page" : undefined}
-                    className={`px-3 py-2 rounded-lg text-sm font-semibold border transition ${
-                      n === safePage ? "shadow-sm" : "hover:bg-white"
-                    }`}
-                    style={
-                      n === safePage
-                        ? { backgroundColor: AMARILLO, color: AZUL, borderColor: "transparent" }
-                        : { color: AZUL, borderColor: "#e5e7eb" }
-                    }
-                  >
-                    {n}
-                  </Link>
-                ))}
-
-                <Link
-                  href={pageUrl(baseParams, Math.min(totalPages, safePage + 1), PAGE_SIZE)}
-                  aria-disabled={safePage === totalPages}
-                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
-                    safePage === totalPages ? "pointer-events-none opacity-50" : "hover:bg-white"
-                  }`}
-                  style={{ color: AZUL }}
-                >
-                  <span className="hidden sm:inline">Siguiente</span>
-                </Link>
-
-                <Link
-                  href={pageUrl(baseParams, totalPages, PAGE_SIZE)}
-                  aria-disabled={safePage === totalPages}
-                  className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${
-                    safePage === totalPages ? "pointer-events-none opacity-50" : "hover:bg-white"
-                  }`}
-                  style={{ color: AZUL }}
-                >
-                  <span className="hidden sm:inline">Última</span>
-                </Link>
-              </div>
-            </div>
-          )}
+          {/* Sugerencias recientes (usando la carga defensiva) */}
+          <RecentSuggestionsTable items={recentSuggestions} />
         </div>
+      </div>
+    );
+  } catch {
+    return <div className="p-6">No se pudieron cargar los datos.</div>;
+  }
+}
 
-        {/* Sugerencias */}
-        {suggestions.length > 0 && (
-          <div className="mt-8 rounded-3xl border border-blue-200/50 bg-gradient-to-r from-blue-50 to-indigo-50 p-8 shadow-lg">
-            <div className="flex items-start space-x-4">
-              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-blue-500">
-                <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547z" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h4 className="mb-4 text-lg font-bold text-slate-800">Sugerencias recientes (desde n8n):</h4>
-                <div className="space-y-3">
-                  {suggestions.slice(0, 5).map((s) => (
-                    <div key={`s-${s.id}`} className="rounded-xl border border-white/50 bg-white/60 p-4 backdrop-blur-sm">
-                      <div className="font-medium text-slate-700">{s.sugerencia}</div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        {format(new Date(s.fecha), "dd MMMM yyyy", { locale: es })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+/* ==================== Subcomponentes server ==================== */
+function Paginator({
+  page, totalPages, pageSize, totalItems, baseParams,
+}: { page: number; totalPages: number; pageSize: number; totalItems: number; baseParams: Record<string, string | undefined> }) {
+  const startIdx = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endIdx = Math.min(page * pageSize, totalItems);
+  return (
+    <div className="px-6 py-4 flex flex-col sm:flex-row gap-3 sm:gap-0 items-center justify-between bg-gray-50 border-t">
+      <span className="text-sm text-gray-600">
+        Página <strong>{page}</strong> de <strong>{totalPages}</strong> · Mostrando <strong>{startIdx}</strong>–<strong>{endIdx}</strong> de <strong>{totalItems}</strong>
+      </span>
+      <div className="flex items-center gap-1">
+        <Link className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${page === 1 ? "pointer-events-none opacity-50" : "hover:bg-white"}`} href={pageUrl(baseParams, 1, pageSize)} style={{ color: AZUL }}>Primera</Link>
+        <Link className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${page === 1 ? "pointer-events-none opacity-50" : "hover:bg-white"}`} href={pageUrl(baseParams, Math.max(1, page - 1), pageSize)} style={{ color: AZUL }}>Anterior</Link>
+        {numberedPages(page, totalPages).map((n) => (
+          <Link key={n} href={pageUrl(baseParams, n, pageSize)} aria-current={n === page ? "page" : undefined}
+            className={`px-3 py-2 rounded-lg text-sm font-semibold border transition ${n === page ? "shadow-sm" : "hover:bg-white"}`}
+            style={n === page ? { backgroundColor: AMARILLO, color: AZUL, borderColor: "transparent" } : { color: AZUL, borderColor: "#e5e7eb" }}>
+            {n}
+          </Link>
+        ))}
+        <Link className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${page === totalPages ? "pointer-events-none opacity-50" : "hover:bg-white"}`} href={pageUrl(baseParams, Math.min(totalPages, page + 1), pageSize)} style={{ color: AZUL }}>Siguiente</Link>
+        <Link className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 transition ${page === totalPages ? "pointer-events-none opacity-50" : "hover:bg-white"}`} href={pageUrl(baseParams, totalPages, pageSize)} style={{ color: AZUL }}>Última</Link>
+      </div>
+    </div>
+  );
+}
+
+function RecentSuggestionsTable({ items }: { items: RecentSuggestion[] }) {
+  return (
+    <div className="mt-8 overflow-hidden rounded-3xl border border-blue-200/60 bg-white shadow-xl">
+      <div className="border-b border-blue-200/40 bg-gradient-to-r from-blue-50 to-indigo-50 px-8 py-6">
+        <h4 className="text-xl font-bold text-slate-800">Sugerencias recientes</h4>
+        <p className="mt-1 text-sm text-slate-600">Últimas 10 recomendaciones generadas por IA (n8n).</p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="border-b border-slate-200 bg-slate-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">Fecha</th>
+              <th className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">Producto / Código</th>
+              <th className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-700">Sugerencia</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {items.length > 0 ? items.map((s) => (
+              <tr key={s.id} className="hover:bg-slate-50/60">
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800">
+                  {format(new Date(s.created_at), "dd/MM/yyyy HH:mm", { locale: es })}
+                </td>
+                <td className="px-6 py-4 text-sm font-medium text-slate-700">
+                  {extractDescAndCode(s.comentario ?? "", s.proyecto ?? "-")}
+                </td>
+                <td className="px-6 py-4 text-sm text-slate-700">
+                  <div className="rounded-lg border border-slate-200/70 bg-white/70 p-3 text-[13px] leading-relaxed whitespace-pre-wrap">
+                    {s.sugerencia}
+                  </div>
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={3} className="px-6 py-10 text-center text-slate-500">
+                  No hay sugerencias recientes todavía.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
