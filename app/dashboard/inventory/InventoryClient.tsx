@@ -72,13 +72,11 @@ function InventoryView({ take }: { take: number }) {
 
   // Paginación local (sobre lo ya descargado)
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(50);
+  const [itemsPerPage, setItemsPerPage] = useState(10); // 👈 por defecto 10
 
-  // Seteo amigable para móviles en el primer render del cliente
+  // (sin override en mobile)
   useEffect(() => {
-    if (typeof window !== "undefined" && window.innerWidth < 640) {
-      setItemsPerPage(25);
-    }
+    // mantenemos 10 en todas las vistas
   }, []);
 
   // Edición
@@ -347,6 +345,7 @@ function InventoryView({ take }: { take: number }) {
             className="border-2 rounded-lg px-4 py-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2"
             style={{ borderColor: "#00152F", color: "#00152F", ["--tw-ring-color" as any]: "#FFBD00" }}
           >
+            <option value={10}>10 por página</option>
             <option value={25}>25 por página</option>
             <option value={50}>50 por página</option>
             <option value={100}>100 por página</option>
