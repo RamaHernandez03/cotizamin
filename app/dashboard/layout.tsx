@@ -43,12 +43,14 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     redirect("/onboarding/ruc?from=/dashboard");
   }
 
+  const year = new Date().getFullYear();
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen flex flex-col bg-gray-50">
       <TopNavbar />
       <NotificationsWatcher clienteId={String(clienteId)} pollMs={60000} />
 
-      <div className="flex flex-col md:flex-row gap-4 md:gap-6 px-3 sm:px-4 md:px-6 pt-4 md:pt-6">
+      <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 px-3 sm:px-4 md:px-6 pt-4 md:pt-6">
         <aside className="hidden md:block md:sticky md:top-20 md:self-start md:w-64 md:h[calc(100vh-6rem)] space-y-6 overflow-y-auto">
           <WelcomeCard user={(session.user as any).nombre || "Usuario"} ruc={cliente?.ruc || "N/A"} />
           <MenuWidget />
@@ -59,6 +61,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           </div>
         </main>
       </div>
+
+      {/* ==== FOOTER AZUL ==== */}
+      <footer className="h-16 bg-[#00152F] text-white flex items-center justify-center text-xs md:text-sm px-4 mt-8">
+        Cotizamin — todos los derechos reservados © {year}
+      </footer>
     </div>
   );
 }
