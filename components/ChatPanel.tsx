@@ -185,7 +185,7 @@ export default function ChatPanel({
               }}
               placeholder="Escribí tu mensaje..."
               disabled={sending}
-              className="w-full rounded-2xl border border-gray-300 px-4 py-2.5 pr-12 focus:outline-none focus:border-[#00152F] focus:ring-2 focus:ring-[#00152F]/20 disabled:opacity-50 disabled:cursor-not-allowed text-sm transition-all"
+              className="w-full rounded-2xl text-blue-800 border border-gray-300 px-4 py-2.5 pr-12 focus:outline-none focus:border-[#00152F] focus:ring-2 focus:ring-[#00152F]/20 disabled:opacity-50 disabled:cursor-not-allowed text-sm transition-all"
             />
           </div>
           <button

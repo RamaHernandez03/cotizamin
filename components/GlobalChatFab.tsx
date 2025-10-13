@@ -1,7 +1,7 @@
 // components/GlobalChatFab.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import { MessageSquare, ChevronLeft, Loader2, X } from "lucide-react";
@@ -36,9 +36,7 @@ async function safeJson(res: Response) {
 function normalizeDesc(raw?: string | null) {
   const s = (raw || "").trim();
   if (!s) return "";
-  // quita prefijos comunes al inicio
   let out = s.replace(/^\s*(adjudicaci[oó]n|venta|proyecto)\s*:\s*/i, "");
-  // colapsa espacios y guiones sobrantes
   out = out.replace(/\s*-\s*/g, " - ").replace(/\s+/g, " ").trim();
   return out;
 }
@@ -55,8 +53,6 @@ function dedupeParts(parts: string[]) {
   return res;
 }
 
-/** Construye "Venta - {Producto} {CODIGO}" si hay datos, si no, usa el proyecto */
-/** Construye "Venta - {Producto} {CODIGO}" si hay datos; si no, "Venta" */
 /** "Venta - {Producto} {CODIGO}" (limpio) o "Venta" */
 function formatTitle(
   c?: Pick<ConversationRow, "producto_desc" | "codigo_interno"> | null
@@ -67,14 +63,11 @@ function formatTitle(
   const desc = normalizeDesc(c.producto_desc);
   const code = (c.codigo_interno || "").trim();
 
-  // evita "X - X"
   const pieces = dedupeParts([desc]).filter(Boolean);
   const right = [pieces.join(" - "), code].filter(Boolean).join(" ").trim();
 
   return right ? `${base} - ${right}` : base;
 }
-
-
 
 export default function GlobalChatFab() {
   const { status } = useSession();
@@ -86,6 +79,11 @@ export default function GlobalChatFab() {
   const [convs, setConvs] = useState<ConversationRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeTitle, setActiveTitle] = useState<string>("");
+
+  // ===== Nuevo: tracking de "nuevo" y último total =====
+  const [justNew, setJustNew] = useState(false);
+  const lastUnreadRef = useRef<number>(0);
+  const justNewTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   function timeAgo(iso?: string | null) {
     if (!iso) return "";
@@ -100,8 +98,6 @@ export default function GlobalChatFab() {
   }
 
   const fetchList = async () => {
-    setLoading(true);
-    setErrorList(null);
     try {
       const res = await fetch("/api/chat/conversations", {
         cache: "no-store",
@@ -131,9 +127,9 @@ export default function GlobalChatFab() {
           unreadCount: x.unreadCount ?? 0,
           updatedAt: x.updatedAt ?? x.lastMessageAt ?? null,
           saleId: x.saleId ?? x.ventaId ?? null,
-          /** NUEVO: intentar traer estos campos si el backend los envía */
           producto_desc: x.producto_desc ?? x.productoDescripcion ?? null,
           codigo_interno: x.codigo_interno ?? x.codigoInterno ?? null,
+          expiresAt: x.expiresAt ?? null,
         }))
         .sort((a: ConversationRow, b: ConversationRow) => {
           const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
@@ -143,15 +139,13 @@ export default function GlobalChatFab() {
 
       setConvs(items);
 
-      // Si hay una conversación activa, refrescar su título (por si ahora llegó el producto/código)
+      // Refrescar título si hay una conversación activa
       if (activeId) {
-        const current = items.find(i => i.id === activeId);
+        const current = items.find((i) => i.id === activeId);
         setActiveTitle(formatTitle(current));
       }
     } catch (e: any) {
       setErrorList(e?.message || "Error desconocido");
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -159,30 +153,67 @@ export default function GlobalChatFab() {
     setMounted(true);
   }, []);
 
+  // ===== Polling: siempre (cada 30s) + si está abierto, más frecuente (20s) =====
   useEffect(() => {
-    if (!open) return;
+    let baseInterval: NodeJS.Timeout | null = null;
+    let openInterval: NodeJS.Timeout | null = null;
+
+    // primera carga rápida
     fetchList();
-    const t = setInterval(fetchList, 20000);
-    return () => clearInterval(t);
+
+    // polling base con panel cerrado
+    baseInterval = setInterval(fetchList, 30000);
+
+    if (open) {
+      // refetch inmediato al abrir
+      fetchList();
+      openInterval = setInterval(fetchList, 20000);
+    }
+
+    return () => {
+      if (baseInterval) clearInterval(baseInterval);
+      if (openInterval) clearInterval(openInterval);
+    };
   }, [open]);
 
+  // ===== Detectar "nuevo" cuando sube el total no leído =====
+  const totalUnread = useMemo(
+    () => convs.reduce((acc, c) => acc + (c.unreadCount || 0), 0),
+    [convs]
+  );
+
+  useEffect(() => {
+    // Si aumentó con respecto a la última lectura y el panel está cerrado: marcar "justNew"
+    if (!open && totalUnread > lastUnreadRef.current) {
+      setJustNew(true);
+      if (justNewTimerRef.current) clearTimeout(justNewTimerRef.current);
+      justNewTimerRef.current = setTimeout(() => setJustNew(false), 5000); // se apaga solo a los 5s
+    }
+    // guardar último valor
+    lastUnreadRef.current = totalUnread;
+  }, [totalUnread, open]);
+
+  useEffect(() => {
+    return () => {
+      if (justNewTimerRef.current) clearTimeout(justNewTimerRef.current);
+    };
+  }, []);
+
   // Escuchar evento para abrir chat desde ventas
-useEffect(() => {
-  const handleOpenChat = (e: CustomEvent) => {
-    const { conversationId, /* title, */ producto_desc, codigo_interno } = e.detail || {};
-    // ignoramos "title" para evitar "Adjudicación: X - Adjudicación: X"
-    const composed = formatTitle({ producto_desc, codigo_interno });
-    setOpen(true);
-    setActiveId(conversationId);
-    setActiveTitle(composed);
-  };
+  useEffect(() => {
+    const handleOpenChat = (e: CustomEvent) => {
+      const { conversationId, producto_desc, codigo_interno } = e.detail || {};
+      const composed = formatTitle({ producto_desc, codigo_interno });
+      setOpen(true);
+      setActiveId(conversationId);
+      setActiveTitle(composed);
+    };
 
-  window.addEventListener("openGlobalChat", handleOpenChat as EventListener);
-  return () => {
-    window.removeEventListener("openGlobalChat", handleOpenChat as EventListener);
-  };
-}, []);
-
+    window.addEventListener("openGlobalChat", handleOpenChat as EventListener);
+    return () => {
+      window.removeEventListener("openGlobalChat", handleOpenChat as EventListener);
+    };
+  }, []);
 
   const onOpenConversation = (c: ConversationRow) => {
     setActiveId(c.id);
@@ -190,23 +221,23 @@ useEffect(() => {
     setConvs((prev) => prev.map((x) => (x.id === c.id ? { ...x, unreadCount: 0 } : x)));
   };
 
-  const totalUnread = useMemo(
-    () => convs.reduce((acc, c) => acc + (c.unreadCount || 0), 0),
-    [convs]
-  );
-
   if (status !== "authenticated" || !mounted) return null;
 
   const body = (
     <div className="fixed bottom-6 right-6 z-[9999] pointer-events-none">
-      {/* FAB con efecto de pulsación */}
+      {/* FAB con indicador de notificación */}
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+          setJustNew(false); // si abrís, apagamos el “recién llegado”
+        }}
         aria-label="Abrir mensajes"
         className="pointer-events-auto w-16 h-16 rounded-full flex items-center justify-center shadow-xl hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 relative group"
         style={{ backgroundColor: AZUL }}
       >
         <MessageSquare className="w-7 h-7 text-white transition-transform group-hover:scale-110" />
+
+        {/* Badge de cantidad (lo que ya tenías) */}
         {totalUnread > 0 && (
           <span
             className="absolute -top-1 -right-1 min-w-6 h-6 px-1.5 rounded-full text-xs font-bold flex items-center justify-center text-white shadow-lg animate-pulse"
@@ -215,16 +246,40 @@ useEffect(() => {
             {totalUnread > 99 ? "99+" : totalUnread}
           </span>
         )}
+
+        {/* NUEVO: puntito + ping cuando llega algo “recién” y el panel está cerrado */}
+        {!open && justNew && (
+          <>
+            {/* Ping animado */}
+            <span className="absolute top-2 right-2 inline-flex h-3 w-3 rounded-full animate-ping opacity-75"
+              style={{ backgroundColor: "#ef4444" }}
+            />
+            {/* Punto sólido */}
+            <span className="absolute top-2 right-2 inline-flex h-3 w-3 rounded-full"
+              style={{ backgroundColor: "#ef4444" }}
+              aria-hidden
+            />
+          </>
+        )}
+
+        {/* Halo cuando hay no leídos y el panel está cerrado (suave) */}
+        {!open && totalUnread > 0 && (
+          <span
+            className="absolute inset-0 rounded-full ring-2 animate-[pulse_1.6s_ease-in-out_infinite]"
+            style={{ boxShadow: "0 0 0 6px rgba(239,68,68,0.15)" }}
+            aria-hidden
+          />
+        )}
       </button>
 
-      {/* Panel mejorado */}
+      {/* Panel */}
       {open && (
         <div className="pointer-events-auto absolute bottom-20 right-0 w-96 max-w-[92vw] bg-white rounded-3xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200 border border-gray-100">
-          {/* Header con gradiente sutil */}
-          <div 
+          {/* Header */}
+          <div
             className="flex items-center justify-between px-5 py-4 text-white relative overflow-hidden"
-            style={{ 
-              background: `linear-gradient(135deg, ${AZUL} 0%, ${AZUL_CLARO} 100%)`
+            style={{
+              background: `linear-gradient(135deg, ${AZUL} 0%, ${AZUL_CLARO} 100%)`,
             }}
           >
             <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -260,7 +315,7 @@ useEffect(() => {
           {/* Contenido */}
           <div className="h-[560px] max-h-[70vh] flex flex-col bg-gray-50">
             {!activeId ? (
-              // LISTA DE CONVERSACIONES
+              // LISTA
               <div className="flex-1 overflow-y-auto">
                 {loading && (
                   <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3 px-6">
@@ -312,8 +367,8 @@ useEffect(() => {
                         </div>
                       </div>
                       {!!c.unreadCount && (
-                        <span 
-                          className="ml-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm flex-shrink-0" 
+                        <span
+                          className="ml-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm flex-shrink-0"
                           style={{ backgroundColor: "#ef4444" }}
                         >
                           {c.unreadCount}
