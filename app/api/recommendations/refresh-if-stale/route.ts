@@ -4,52 +4,42 @@ import prisma from "@/lib/prisma";
 
 const HRS = 1000 * 60 * 60;
 
+// app/api/recommendations/refresh-if-stale/route.ts
 export async function POST(req: NextRequest) {
   const { cliente_id, thresholdHours = 12 } = await req.json();
-  if (!cliente_id) {
-    return NextResponse.json({ ok: false, error: "cliente_id required" }, { status: 400 });
-  }
+  if (!cliente_id) return NextResponse.json({ ok:false, error:"cliente_id required" }, { status:400 });
 
-  // ✅ Derivá el origin del request (funciona en local y prod, detrás de proxy también)
   const origin = new URL(req.url).origin;
 
   const latest = await prisma.recommendationBatch.findFirst({
     where: { cliente_id },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: 'desc' },
     select: { id: true, createdAt: true },
   });
 
-  const now = Date.now();
-  const isStale = !latest || now - new Date(latest.createdAt).getTime() > thresholdHours * HRS;
+  const isStale = !latest || (Date.now() - +latest.createdAt) > thresholdHours * 3600000;
 
-  if (!isStale) {
-    return NextResponse.json({ ok: true, refreshed: false, batchId: latest?.id ?? null });
-  }
+  // responder rápido siempre; si no está stale, listo
+  if (!isStale) return NextResponse.json({ ok:true, refreshed:false, batchId: latest?.id ?? null });
 
-  // (opcional) ping a n8n vía tu notify-recos, también con origin derivado
-  try {
-    await fetch(`${origin}/api/notify-recos`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ userId: cliente_id, event: "stale-refresh" }),
-    });
-  } catch {
-    // seguimos aunque falle el ping
-  }
-
-  // 🔁 Refresh “fuerte” (persistencia)
-  const res = await fetch(`${origin}/api/recommendations/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-    body: JSON.stringify({ cliente_id }),
+  // kick async (no await)
+  queueMicrotask(async () => {
+    try {
+      await prisma.$executeRawUnsafe(`SELECT pg_advisory_lock(hashtext($1))`, cliente_id);
+      await fetch(`${origin}/api/recommendations/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ cliente_id }),
+      });
+    } catch (e) {
+      console.error('refresh-if-stale async error', e);
+    } finally {
+      await prisma.$executeRawUnsafe(`SELECT pg_advisory_unlock(hashtext($1))`, cliente_id)
+        .catch(() => {});
+    }
   });
 
-  if (!res.ok) {
-    return NextResponse.json({ ok: false, error: `refresh failed (${res.status})` }, { status: 502 });
-  }
-
-  const json = await res.json();
-  return NextResponse.json({ ok: true, refreshed: true, ...json });
+  return NextResponse.json({ ok:true, accepted:true }, { status:202 });
 }
+
