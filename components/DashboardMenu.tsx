@@ -2,41 +2,52 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 export default function DashboardMenu({ onNavigate }: { onNavigate?: () => void }) {
-  const itemClass =
-    "flex items-center p-2 text-gray-700 hover:bg-[#00152F] hover:text-[#efefef] rounded-md transition-colors";
+  const pathname = usePathname();
+
+  const isActive = (href: string) => pathname === href;
 
   const handle = () => onNavigate?.();
-  // Solo agregamos onClick si existe onNavigate
-  const clickProps = onNavigate ? { onClick: handle } as const : {};
+  const clickProps = onNavigate ? ({ onClick: handle } as const) : {};
+
+  const menuItems = [
+    { href: "/dashboard/home", icon: "📋", label: "Resumen" },
+    { href: "/dashboard/inventory", icon: "📦", label: "Inventario" },
+    { href: "/dashboard/sales", icon: "⭐", label: "Ventas" },
+    { href: "/dashboard/feedback", icon: "💬", label: "Cotizaciones" },
+    { href: "/dashboard/notifications", icon: "🔔", label: "Notificaciones" },
+    { href: "/dashboard/stats", icon: "📊", label: "Estadísticas" },
+    { href: "/dashboard/support", icon: "🛠️", label: "Soporte" },
+    { href: "/dashboard/profile", icon: "👤", label: "Mi Perfil" },
+  ];
 
   return (
     <nav className="space-y-2">
-      <Link href="/dashboard/home" className={itemClass} {...clickProps}>
-        <span className="mr-3">📋</span> <span className="text-sm">Resumen</span>
-      </Link>
-      <Link href="/dashboard/inventory" className={itemClass} {...clickProps}>
-        <span className="mr-3">📦</span> <span className="text-sm">Inventario</span>
-      </Link>
-      <Link href="/dashboard/sales" className={itemClass} {...clickProps}>
-        <span className="mr-3">⭐</span> <span className="text-sm">Ventas</span>
-      </Link>
-      <Link href="/dashboard/feedback" className={itemClass} {...clickProps}>
-        <span className="mr-3">💬</span> <span className="text-sm">Cotizaciones</span>
-      </Link>
-      <Link href="/dashboard/notifications" className={itemClass} {...clickProps}>
-        <span className="mr-3">🔔</span> <span className="text-sm">Notificaciones</span>
-      </Link>
-      <Link href="/dashboard/stats" className={itemClass} {...clickProps}>
-        <span className="mr-3">📊</span> <span className="text-sm">Estadísticas</span>
-      </Link>
-      <Link href="/dashboard/support" className={itemClass} {...clickProps}>
-        <span className="mr-3">🛠️</span> <span className="text-sm">Soporte</span>
-      </Link>
-      <Link href="/dashboard/profile" className={itemClass} {...clickProps}>
-        <span className="mr-3">👤</span> <span className="text-sm">Mi Perfil</span>
-      </Link>
+      {menuItems.map((item) => {
+        const active = isActive(item.href);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`
+              flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300
+              font-medium text-sm
+              ${
+                active
+                  ? "bg-gradient-to-r from-[#00152F] to-[#001a3d] text-white shadow-md border border-[#FFBD00]/30"
+                  : "text-gray-700 hover:bg-gradient-to-r hover:from-blue-50 hover:to-blue-50/50 hover:text-[#00152F] border border-transparent hover:border-blue-200"
+              }
+            `}
+            {...clickProps}
+          >
+            <span className="text-lg flex-shrink-0">{item.icon}</span>
+            <span className="text-sm font-semibold">{item.label}</span>
+            {active && <span className="ml-auto text-[#FFBD00]">●</span>}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
