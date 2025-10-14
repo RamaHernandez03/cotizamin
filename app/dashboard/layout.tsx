@@ -27,7 +27,7 @@ function MenuWidget() {
   return (
     <div className="bg-gradient-to-b from-white to-gray-50 rounded-2xl shadow-md p-6 border border-gray-200/50">
       <div className="mb-6">
-        <h3 className="text-sm md:text-base font-bold text-[#00152F] mb-4 tracking-wide uppercase">📍 Navegación</h3>
+        <h3 className="text-sm md:text-base font-bold text-[#00152F] mb-4 tracking-wide uppercase"> Navegación</h3>
         <div className="h-1 bg-gradient-to-r from-[#FFBD00] to-[#FFBD00]/30 rounded-full w-12"></div>
       </div>
       <DashboardMenu />

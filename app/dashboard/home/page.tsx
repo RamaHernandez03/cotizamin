@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import Link from "next/link";
 import { Suspense } from "react";
 import { unstable_cache } from "next/cache";
+import { ProductStatsTable, TopSearchedProductsTable } from "@/components/ProductsHomeTable";
 
 /* ===== Config RSC ===== */
 export const runtime = "nodejs";
@@ -319,8 +320,9 @@ export default async function DashboardHomePage() {
                   <p>
                     Aceptación:{" "}
                     <span className={
+                      (respuestaRating, // no usado, pero mantiene consistencia visual
                       aceptacionRating === "Bueno" ? "text-green-600 font-bold" :
-                      aceptacionRating === "Regular" ? "text-yellow-600 font-bold" : "text-rose-600 font-bold"
+                      aceptacionRating === "Regular" ? "text-yellow-600 font-bold" : "text-rose-600 font-bold")
                     }>
                       {aceptacionRating}
                     </span>{" "}
@@ -347,6 +349,16 @@ export default async function DashboardHomePage() {
               bgColor="from-orange-50 to-amber-50"
             />
           </div>
+        </section>
+
+        {/* === NUEVA SECCIÓN: Productos (vertical, uno debajo del otro) === */}
+        <section className="space-y-6">
+          <Suspense fallback={<ModernSkeleton title="Comparativa de Precios" />}>
+            <ProductStatsTable proveedorId={proveedorId} />
+          </Suspense>
+          <Suspense fallback={<ModernSkeleton title="Productos más buscados" />}>
+            <TopSearchedProductsTable />
+          </Suspense>
         </section>
 
         {/* Async Sections */}
