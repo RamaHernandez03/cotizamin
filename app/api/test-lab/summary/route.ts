@@ -18,24 +18,50 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const [row] = await prisma.$queryRawUnsafe<any[]>(
+    // Total de clientes
+    const [totalClientes] = await prisma.$queryRawUnsafe<{ total: number }[]>(
+      `SELECT COUNT(*)::int AS total FROM "Cliente"`
+    );
+
+    // Total de productos
+    const [totalProductos] = await prisma.$queryRawUnsafe<{ total: number }[]>(
+      `SELECT COUNT(*)::int AS total FROM "Producto"`
+    );
+
+    // Total de cotizaciones (todas)
+    const [totalCotizaciones] = await prisma.$queryRawUnsafe<{ total: number }[]>(
+      `SELECT COUNT(*)::int AS total FROM "CotizacionParticipacion"`
+    );
+
+    // Total de búsquedas (desde ProductSearchLog)
+    const [totalBusquedas] = await prisma.$queryRawUnsafe<{ total: number }[]>(
+      `SELECT COUNT(*)::int AS total FROM "ProductSearchLog"`
+    );
+
+    // Última actualización de stock
+    const [lastStockUpdate] = await prisma.$queryRawUnsafe<{ fecha: Date | null }[]>(
+      `SELECT MAX("fecha_actualizacion") AS fecha FROM "Producto"`
+    );
+
+    // Ventas en los últimos 30 días (cotizaciones aceptadas)
+    const [ventas30d] = await prisma.$queryRawUnsafe<{ total: number }[]>(
       `
-      SELECT
-        (SELECT COUNT(*)::int FROM "Cliente") AS total_clientes,
-        (SELECT COUNT(*)::int FROM "Producto") AS total_productos,
-        (SELECT COUNT(*)::int FROM "CotizacionParticipacion") AS total_cotizaciones,
-        (SELECT COUNT(*)::int FROM "ProductSearchLog") AS total_busquedas,
-        (SELECT MAX("fecha_actualizacion") FROM "Producto") AS last_stock_update,
-        (
-          SELECT COUNT(*)::int 
-          FROM "CotizacionParticipacion" 
-          WHERE "fecha" >= NOW() - INTERVAL '30 days'
-          AND "resultado" IN ('aceptado', 'ganado')
-        ) AS ventas_30d
+      SELECT COUNT(*)::int AS total
+      FROM "CotizacionParticipacion"
+      WHERE "resultado" = 'Aceptado'
+      AND "fecha" >= NOW() - INTERVAL '30 days'
       `
     );
 
-    return NextResponse.json({ ok: true, ...row });
+    return NextResponse.json({
+      ok: true,
+      total_clientes: totalClientes?.total || 0,
+      total_productos: totalProductos?.total || 0,
+      total_cotizaciones: totalCotizaciones?.total || 0,
+      total_busquedas: totalBusquedas?.total || 0,
+      last_stock_update: lastStockUpdate?.fecha || null,
+      ventas_30d: ventas30d?.total || 0,
+    });
   } catch (err: any) {
     console.error(err);
     return NextResponse.json({ ok: false, error: err.message || "Error" }, { status: 500 });

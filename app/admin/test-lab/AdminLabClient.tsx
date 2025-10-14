@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 type Row = {
   id_cliente: string;
@@ -73,6 +73,23 @@ type ProductBreakdownResponse = {
   error?: string;
 };
 
+type SearchLogRow = {
+  descripcion: string;
+  total_busquedas: number;
+  marcas: string | null;
+  materiales: string | null;
+  ultima_busqueda: string;
+  usuarios_unicos: number;
+};
+
+type SearchLogsResponse = {
+  ok: boolean;
+  total_unique: number;
+  total_events: number;
+  rows: SearchLogRow[];
+  error?: string;
+};
+
 const PAGE_SIZE = 20;
 
 export default function AdminLabClient() {
@@ -98,6 +115,11 @@ export default function AdminLabClient() {
   const [paLoading, setPaLoading] = useState(false);
   const [paErr, setPaErr] = useState<string | null>(null);
   const [selectedBreakdownIndex, setSelectedBreakdownIndex] = useState<number | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  const [searchLogsPage, setSearchLogsPage] = useState(1);
+  const [searchLogs, setSearchLogs] = useState<SearchLogsResponse | null>(null);
+  const [searchLogsLoading, setSearchLogsLoading] = useState(false);
 
   async function loadMain() {
     setLoading(true);
@@ -133,6 +155,29 @@ export default function AdminLabClient() {
   useEffect(() => {
     loadSummary();
   }, []);
+
+  const searchLogsOffset = useMemo(() => (searchLogsPage - 1) * PAGE_SIZE, [searchLogsPage]);
+
+  async function loadSearchLogs(pageLocal: number) {
+    setSearchLogsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String((pageLocal - 1) * PAGE_SIZE));
+      const res = await fetch(`/api/test-lab/search-logs?${params.toString()}`, { cache: "no-store" });
+      const json = (await res.json()) as SearchLogsResponse;
+      if (!json.ok) throw new Error(json.error || "Error");
+      setSearchLogs(json);
+    } catch (e: any) {
+      console.error(e);
+    } finally {
+      setSearchLogsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSearchLogs(searchLogsPage);
+  }, [searchLogsPage]);
 
   function onSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -236,6 +281,104 @@ export default function AdminLabClient() {
     exportToCSV([row], `producto_${row.descripcion.replace(/\s+/g, '_')}`);
   }
 
+  async function deleteCliente(clienteId: string) {
+    if (!deleteConfirm) return;
+    try {
+      const res = await fetch("/api/test-lab/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: clienteId }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || "Error");
+      setDeleteConfirm(null);
+      loadMain();
+    } catch (e: any) {
+      alert("Error al eliminar: " + (e.message || "Error"));
+      setDeleteConfirm(null);
+    }
+  }
+
+  function renderCandleChart(prices: number[]) {
+    if (!prices || prices.length === 0) return null;
+    
+    const sorted = [...prices].sort((a, b) => a - b);
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    const range = max - min || 1;
+    const q1 = sorted[Math.floor(sorted.length * 0.25)];
+    const median = sorted[Math.floor(sorted.length * 0.5)];
+    const q3 = sorted[Math.floor(sorted.length * 0.75)];
+    
+    const chartHeight = 250;
+    const yScale = chartHeight / range;
+    const candleWidth = 60;
+    
+    const minY = chartHeight - (min - min) * yScale;
+    const q1Y = chartHeight - (q1 - min) * yScale;
+    const medianY = chartHeight - (median - min) * yScale;
+    const q3Y = chartHeight - (q3 - min) * yScale;
+    const maxY = chartHeight - (max - min) * yScale;
+    
+    return (
+      <svg width="100%" height={chartHeight + 60} className="mt-4">
+        <defs>
+          <linearGradient id="candleGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.8" />
+            <stop offset="100%" stopColor="#1e40af" stopOpacity="0.8" />
+          </linearGradient>
+        </defs>
+        
+        {/* Grid lines */}
+        <line x1="50" y1={minY} x2="95%" y2={minY} stroke="#e5e7eb" strokeWidth="1" strokeDasharray="3,3" />
+        <line x1="50" y1={medianY} x2="95%" y2={medianY} stroke="#e5e7eb" strokeWidth="1" strokeDasharray="3,3" />
+        <line x1="50" y1={maxY} x2="95%" y2={maxY} stroke="#e5e7eb" strokeWidth="1" strokeDasharray="3,3" />
+        
+        {/* Wick (min to max) */}
+        <line x1="50%" y1={minY} x2="50%" y2={maxY} stroke="#3b82f6" strokeWidth="2" />
+        
+        {/* Body (Q1 to Q3) */}
+        <rect 
+          x="50%" 
+          y={Math.min(q1Y, q3Y)} 
+          width={candleWidth} 
+          height={Math.abs(q3Y - q1Y) || 3}
+          fill="url(#candleGrad)"
+          stroke="#1e40af"
+          strokeWidth="2"
+          transform={`translate(-${candleWidth / 2}, 0)`}
+        />
+        
+        {/* Median line */}
+        <line 
+          x1={`calc(50% - ${candleWidth / 2})`} 
+          y1={medianY} 
+          x2={`calc(50% + ${candleWidth / 2})`} 
+          y2={medianY} 
+          stroke="#fff" 
+          strokeWidth="2"
+        />
+        
+        {/* Labels */}
+        <text x="5" y={minY + 5} fontSize="12" fill="#666">
+          ${num(min)}
+        </text>
+        <text x="5" y={medianY + 5} fontSize="12" fill="#666" fontWeight="bold">
+          ${num(median)}
+        </text>
+        <text x="5" y={maxY + 5} fontSize="12" fill="#666">
+          ${num(max)}
+        </text>
+        
+        {/* X-axis */}
+        <line x1="50" y1={chartHeight + 5} x2="95%" y2={chartHeight + 5} stroke="#999" strokeWidth="1" />
+        <text x="50%" y={chartHeight + 30} textAnchor="middle" fontSize="13" fill="#666">
+          Distribución: Q1=${num(q1)} | Med=${num(median)} | Q3=${num(q3)}
+        </text>
+      </svg>
+    );
+  }
+
   function createPriceDistributionData(prices: number[]) {
     if (!prices || prices.length === 0) return [];
     
@@ -251,7 +394,7 @@ export default function AdminLabClient() {
       const binMax = binMin + binSize;
       const count = prices.filter(p => p >= binMin && p <= binMax).length;
       bins.push({
-        range: `$${num(binMin)}-$${num(binMax)}`,
+        range: `${num(binMin)}-${num(binMax)}`,
         count,
       });
     }
@@ -362,48 +505,48 @@ export default function AdminLabClient() {
               </div>
             )}
             {paBreakdown && paBreakdown.breakdown.length > 0 && (
-              <div className="bg-gradient-to-r from-yellow-50 to-amber-50 rounded-lg border border-yellow-200 p-4">
-                <p className="text-sm font-medium text-gray-700 mb-3">
+              <div className="bg-white rounded-lg border border-gray-200 p-4">
+                <p className="text-sm font-medium text-gray-800 mb-3">
                   📦 {paBreakdown.total_items} productos encontrados - {paBreakdown.breakdown.length} tipos únicos
                 </p>
                 
                 {/* Breakdown Table */}
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-xs">
-                    <thead className="bg-yellow-200">
+                    <thead className="bg-gradient-to-r from-blue-600 to-blue-700 text-white">
                       <tr>
-                        <th className="text-left px-3 py-2">Descripción</th>
-                        <th className="text-right px-3 py-2">Items</th>
-                        <th className="text-right px-3 py-2">Precio Min</th>
-                        <th className="text-right px-3 py-2">Precio Prom</th>
-                        <th className="text-right px-3 py-2">Precio Max</th>
-                        <th className="text-center px-3 py-2">Proveedores</th>
-                        <th className="text-center px-3 py-2">Acciones</th>
+                        <th className="text-left px-3 py-2 font-semibold">Descripción</th>
+                        <th className="text-right px-3 py-2 font-semibold">Items</th>
+                        <th className="text-right px-3 py-2 font-semibold">Precio Min</th>
+                        <th className="text-right px-3 py-2 font-semibold">Precio Prom</th>
+                        <th className="text-right px-3 py-2 font-semibold">Precio Max</th>
+                        <th className="text-center px-3 py-2 font-semibold">Proveedores</th>
+                        <th className="text-center px-3 py-2 font-semibold">Acciones</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="text-gray-800">
                       {paBreakdown.breakdown.map((row, idx) => (
-                        <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-yellow-50"}>
-                          <td className="text-left px-3 py-2 font-medium max-w-xs truncate">{row.descripcion}</td>
-                          <td className="text-right px-3 py-2">{row.total_items}</td>
-                          <td className="text-right px-3 py-2">${num(row.min_price)}</td>
-                          <td className="text-right px-3 py-2 font-semibold">${num(row.avg_price)}</td>
-                          <td className="text-right px-3 py-2">${num(row.max_price)}</td>
+                        <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-blue-50/30"}>
+                          <td className="text-left px-3 py-2 font-medium max-w-xs truncate text-gray-900">{row.descripcion}</td>
+                          <td className="text-right px-3 py-2 text-gray-800">{row.total_items}</td>
+                          <td className="text-right px-3 py-2 text-gray-800">${num(row.min_price)}</td>
+                          <td className="text-right px-3 py-2 font-semibold text-gray-900">${num(row.avg_price)}</td>
+                          <td className="text-right px-3 py-2 text-gray-800">${num(row.max_price)}</td>
                           <td className="text-center px-3 py-2">
-                            <span className="inline-block px-2 py-0.5 bg-blue-200 text-blue-900 rounded text-xs font-medium">
+                            <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-900 rounded text-xs font-medium">
                               {row.total_proveedores}
                             </span>
                           </td>
                           <td className="text-center px-3 py-2 space-x-2">
                             <button
                               onClick={() => setSelectedBreakdownIndex(selectedBreakdownIndex === idx ? null : idx)}
-                              className="text-blue-600 hover:text-blue-800 font-medium underline"
+                              className="text-blue-600 hover:text-blue-800 font-medium underline text-xs"
                             >
                               {selectedBreakdownIndex === idx ? "Ocultar" : "Ver"} Gráfico
                             </button>
                             <button
                               onClick={() => exportBreakdownRow(row)}
-                              className="text-green-600 hover:text-green-800 font-medium underline"
+                              className="text-blue-600 hover:text-blue-800 font-medium underline text-xs"
                             >
                               Exportar
                             </button>
@@ -416,7 +559,7 @@ export default function AdminLabClient() {
 
                 {/* Expanded Chart View */}
                 {selectedBreakdownIndex !== null && paBreakdown.breakdown[selectedBreakdownIndex] && (
-                  <div className="mt-4 p-4 bg-white rounded-lg border border-yellow-300">
+                  <div className="mt-4 p-4 bg-white rounded-lg border border-gray-200">
                     <div className="mb-3">
                       <h4 className="font-semibold text-gray-800">
                         Distribución de Precios: {paBreakdown.breakdown[selectedBreakdownIndex].descripcion}
@@ -430,17 +573,20 @@ export default function AdminLabClient() {
                         data={createPriceDistributionData(paBreakdown.breakdown[selectedBreakdownIndex].price_distribution)}
                         margin={{ top: 5, right: 30, left: 0, bottom: 60 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis 
                           dataKey="range" 
                           angle={-45}
                           textAnchor="end"
                           height={80}
-                          tick={{ fontSize: 11 }}
+                          tick={{ fontSize: 11, fill: '#666' }}
                         />
-                        <YAxis tick={{ fontSize: 11 }} />
-                        <Tooltip />
-                        <Bar dataKey="count" fill="#f59e0b" />
+                        <YAxis tick={{ fontSize: 11, fill: '#666' }} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
+                          labelStyle={{ color: '#000' }}
+                        />
+                        <Bar dataKey="count" fill="#3b82f6" />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -448,7 +594,7 @@ export default function AdminLabClient() {
               </div>
             )}
             {paBreakdown && paBreakdown.breakdown.length === 0 && (
-              <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200 text-center text-sm text-gray-600">
+              <div className="p-4 bg-white rounded-lg border border-gray-200 text-center text-sm text-gray-600">
                 📭 No se encontraron productos con esa descripción
               </div>
             )}
@@ -539,19 +685,25 @@ export default function AdminLabClient() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
                       {r.participaciones}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-700 text-xs">
                     {r.ultima_actualizacion_stock ? fmtDate(r.ultima_actualizacion_stock) : "—"}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 space-x-2">
                     <button 
                       onClick={() => openItems(r.id_cliente, r.email)}
                       className="text-blue-600 hover:text-blue-800 text-xs font-medium"
                     >
                       Ver detalle →
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirm(r.id_cliente)}
+                      className="text-red-600 hover:text-red-800 text-xs font-medium"
+                    >
+                      Eliminar
                     </button>
                   </td>
                 </tr>
@@ -569,20 +721,136 @@ export default function AdminLabClient() {
         </div>
       </div>
 
-      {/* Drawer */}
-      {openDrawer && selectedCliente && (
-        <div className="fixed inset-0 z-50">
-          <div 
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" 
-            onClick={() => setOpenDrawer(false)} 
+      {/* Search Logs Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-white flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">🔍 Búsquedas (Últimos 30 días)</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              {searchLogs ? `${searchLogs.rows.length} de ${searchLogs.total_unique} búsquedas únicas (${searchLogs.total_events} eventos)` : "Cargando..."}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              if (!searchLogs?.rows) return;
+              exportToCSV(searchLogs.rows, 'busquedas_30d');
+            }}
+            disabled={!searchLogs?.rows || searchLogs.rows.length === 0}
+            className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          >
+            📥 Exportar CSV
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gradient-to-r from-blue-600 to-blue-700 text-white">
+              <tr>
+                <th className="text-left px-4 py-3 font-semibold">Descripción Buscada</th>
+                <th className="text-right px-4 py-3 font-semibold">Total Búsquedas</th>
+                <th className="text-center px-4 py-3 font-semibold">Usuarios Únicos</th>
+                <th className="text-left px-4 py-3 font-semibold">Marcas</th>
+                <th className="text-left px-4 py-3 font-semibold">Materiales</th>
+                <th className="text-left px-4 py-3 font-semibold">Última Búsqueda</th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-800">
+              {searchLogsLoading && (
+                <tr>
+                  <td className="px-4 py-8 text-center" colSpan={6}>
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-5 h-5 border-3 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                      <span className="text-gray-600">Cargando búsquedas...</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {!searchLogsLoading && !searchLogs?.rows?.length && (
+                <tr>
+                  <td className="px-4 py-8 text-center text-gray-500" colSpan={6}>
+                    📭 No hay búsquedas en los últimos 30 días
+                  </td>
+                </tr>
+              )}
+              {searchLogs?.rows?.map((row, i) => (
+                <tr 
+                  key={row.descripcion} 
+                  className={`${i % 2 === 0 ? "bg-white" : "bg-blue-50/30"} hover:bg-blue-100/50 transition-colors border-b border-gray-100`}
+                >
+                  <td className="px-4 py-3 font-medium text-gray-900 max-w-sm truncate">{row.descripcion}</td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                      {row.total_busquedas}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      {row.usuarios_unicos}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-700">{row.marcas || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-700">{row.materiales || "—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600">{fmtDate(row.ultima_busqueda)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="px-5 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
+          <span className="text-sm text-gray-600">
+            {searchLogs ? `Mostrando ${searchLogs.rows.length} de ${searchLogs.total_unique} búsquedas únicas` : "—"}
+          </span>
+          <Pager 
+            page={searchLogsPage} 
+            setPage={setSearchLogsPage} 
+            totalPages={searchLogs ? Math.max(1, Math.ceil(searchLogs.total_unique / PAGE_SIZE)) : 1} 
           />
-          <div className="absolute right-0 top-0 h-full w-full sm:w-[900px] bg-white shadow-2xl flex flex-col animate-slide-in">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-5 flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-semibold">📦 Productos del Cliente</h3>
-                <p className="text-blue-100 text-sm mt-1">{selectedCliente.email}</p>
-              </div>
+        </div>
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setDeleteConfirm(null)} />
+          <div className="relative bg-white rounded-lg shadow-lg p-6 max-w-sm">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Confirmar eliminación</h3>
+            <p className="text-sm text-gray-600 mb-6">
+              ¿Estás seguro de que deseas eliminar este cliente y todos sus datos? Esta acción no se puede deshacer.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => deleteCliente(deleteConfirm)}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+{/* Drawer de Productos */}
+{openDrawer && selectedCliente && (
+  <div className="fixed inset-0 z-50">
+    <div
+      className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
+      onClick={() => setOpenDrawer(false)}
+    />
+    <div className="absolute right-0 top-0 h-full w-full sm:w-[900px] bg-white shadow-2xl flex flex-col animate-slide-in">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-5 flex items-center justify-between">
+        <div>
+          <h3 className="text-xl font-semibold">📦 Productos del Cliente</h3>
+          <p className="text-blue-100 text-sm mt-1">{selectedCliente.email}</p>
+        </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={exportProductos}
