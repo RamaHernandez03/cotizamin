@@ -1,4 +1,4 @@
-// app/api/test-lab/list/route.ts
+// app/api/test-lab/items/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
@@ -19,63 +19,51 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
+    const clienteId = searchParams.get("clienteId");
     const q = (searchParams.get("q") || "").trim();
     const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 100);
     const offset = Math.max(parseInt(searchParams.get("offset") || "0"), 0);
 
-    const whereSql = q
-      ? `
-        WHERE 
-          c.email ILIKE '%' || $1 || '%'
-          OR c.nombre ILIKE '%' || $1 || '%'
-          OR c.ruc ILIKE '%' || $1 || '%'
-      `
+    if (!clienteId) {
+      return NextResponse.json({ ok: false, error: "Missing clienteId" }, { status: 400 });
+    }
+
+    const filterSql = q
+      ? `AND (pr."descripcion" ILIKE '%' || $2 || '%' OR pr."codigo_interno" ILIKE '%' || $2 || '%')`
       : "";
 
     const totalRows = await prisma.$queryRawUnsafe<{ count: string }[]>(
       `
       SELECT COUNT(*)::text AS count
-      FROM "Cliente" c
-      ${q ? "WHERE c.email ILIKE '%' || $1 || '%' OR c.nombre ILIKE '%' || $1 || '%' OR c.ruc ILIKE '%' || $1 || '%'" : ""}
+      FROM "Producto" pr
+      WHERE pr."proveedor_id" = $1
+      ${q ? `AND (pr."descripcion" ILIKE '%' || $2 || '%' OR pr."codigo_interno" ILIKE '%' || $2 || '%')` : ""}
       `,
-      ...(q ? [q] : [])
+      ...(q ? [clienteId, q] as any[] : [clienteId] as any[])
     );
     const total = Number(totalRows?.[0]?.count || 0);
 
-    const args = q ? [q, limit, offset] : [limit, offset];
+    const args = q ? [clienteId, q, limit, offset] : [clienteId, limit, offset];
 
     const rows = await prisma.$queryRawUnsafe<any[]>(
       `
       SELECT
-        c.id_cliente,
-        c.email,
-        c.nombre,
-        c.ruc,
-        c.fecha_registro,
-        COALESCE(p.cnt, 0) AS productos_count,
-        p.last_stock AS ultima_actualizacion_stock,
-        s.last_session AS ultima_sesion,
-        COALESCE(cp.participaciones, 0) AS participaciones
-      FROM "Cliente" c
-      LEFT JOIN LATERAL (
-        SELECT COUNT(*)::int AS cnt, MAX(pr."fecha_actualizacion") AS last_stock
-        FROM "Producto" pr
-        WHERE pr."proveedor_id" = c.id_cliente
-      ) p ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT MAX(se."expires") AS last_session
-        FROM "User" u
-        JOIN "Session" se ON se."userId" = u.id
-        WHERE u.email = c.email
-      ) s ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT COUNT(*)::int AS participaciones
-        FROM "CotizacionParticipacion" x
-        WHERE x."proveedor_id" = c.id_cliente
-      ) cp ON TRUE
-      ${whereSql}
-      ORDER BY c."fecha_registro" DESC
-      LIMIT $${q ? 2 : 1} OFFSET $${q ? 3 : 2}
+        pr.id_producto,
+        pr.codigo_interno,
+        pr.descripcion,
+        pr.marca,
+        pr.modelo,
+        pr.material,
+        pr.moneda,
+        pr.precio_actual,
+        pr.stock_actual,
+        pr.estado,
+        pr.fecha_actualizacion
+      FROM "Producto" pr
+      WHERE pr."proveedor_id" = $1
+      ${filterSql}
+      ORDER BY pr."fecha_actualizacion" DESC
+      LIMIT $${q ? 3 : 2} OFFSET $${q ? 4 : 3}
       `,
       ...args
     );

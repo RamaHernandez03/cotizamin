@@ -22,13 +22,20 @@ export default async function Page() {
   }
 
   return (
-    <main className="p-4 md:p-6">
-      <h1 className="text-xl font-semibold mb-4">Admin • Test Lab</h1>
-      <p className="text-sm text-gray-600 mb-4">
-        Panel simple para explorar clientes, productos y acciones básicas.
-      </p>
-      {/* Client component: fetch + tabla + acciones */}
-      <AdminLabClient />
+    <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-yellow-50 p-4 md:p-6">
+      <div className="max-w-[1600px] mx-auto">
+        <div className="mb-6 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            🔧 Admin Panel • Test Lab
+          </h1>
+          <p className="text-sm text-gray-600">
+            Panel de administración para explorar clientes, productos, analytics y métricas de negocio.
+          </p>
+        </div>
+        
+        {/* Client component: fetch + tabla + acciones */}
+        <AdminLabClient />
+      </div>
     </main>
   );
 }
