@@ -4,6 +4,12 @@ import { useMemo, useState } from "react";
 
 type ProductStats = {
   descripcion: string;
+  marca: string | null;
+  material: string | null;
+  modelo: string | null;
+  norma_tecnica: string | null;
+  unidad: string | null;
+
   precioMin: number;
   precioMax: number;
   precioPromedio: number;
@@ -32,16 +38,30 @@ function getPriceColor(myPrice: number, minPrice: number, maxPrice: number): str
 export default function ProductsTableClient({ data }: { data: ProductStats[] }) {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
-  const pageSize = 10; // paginamos 10 en el front
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return data;
-    return data.filter((d) => d.descripcion.toLowerCase().includes(term));
+    return data.filter((d) => {
+      const hay = [
+        d.descripcion,
+        d.marca ?? "",
+        d.material ?? "",
+        d.modelo ?? "",
+        d.norma_tecnica ?? "",
+        d.unidad ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(term);
+    });
   }, [q, data]);
 
+  // 🔢 paginación fija de 10
+  const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
+
   const start = (currentPage - 1) * pageSize;
   const rows = filtered.slice(start, start + pageSize);
 
@@ -52,19 +72,19 @@ export default function ProductsTableClient({ data }: { data: ProductStats[] }) 
     <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl border border-gray-200 p-6 shadow-sm hover:shadow-lg transition-all duration-500">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
         <h2 className="text-lg font-bold text-[#00152F]">
-          📦 Mis Productos (con comparativa)
-          <span className="ml-2 text-xs text-gray-500 align-middle">{data.length} en total</span>
+          📦 Mis Productos (con comparativa por variante)
+          <span className="ml-2 text-xs text-gray-500 align-middle">{data.length} variantes</span>
         </h2>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <input
             value={q}
             onChange={(e) => {
               setQ(e.target.value);
-              setPage(1);
+              setPage(1); // reset paginación al buscar
             }}
-            placeholder="Buscar por descripción…"
-            className="w-64 max-w-full px-3 py-2 rounded-lg border text-black border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Buscar por desc / marca / material / modelo…"
+            className="w-72 max-w-full px-3 py-2 rounded-lg border text-black border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <span className="text-xs text-gray-600">{filtered.length} resultados</span>
         </div>
@@ -74,7 +94,10 @@ export default function ProductsTableClient({ data }: { data: ProductStats[] }) 
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gradient-to-r from-blue-800 to-blue-900 text-white">
-              <th className="px-4 py-3 text-left font-bold">Producto</th>
+              <th className="px-4 py-3 text-left font-bold">Descripción</th>
+              <th className="px-4 py-3 text-left font-bold">Marca</th>
+              <th className="px-4 py-3 text-left font-bold">Material</th>
+              <th className="px-4 py-3 text-left font-bold">Modelo</th>
               <th className="px-4 py-3 text-right font-bold">Precio Mín.</th>
               <th className="px-4 py-3 text-right font-bold">Precio Prom.</th>
               <th className="px-4 py-3 text-right font-bold">Precio Máx.</th>
@@ -85,17 +108,21 @@ export default function ProductsTableClient({ data }: { data: ProductStats[] }) 
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-600">
-                  No se encontraron productos que coincidan con “{q}”.
+                <td colSpan={9} className="px-4 py-6 text-center text-gray-600">
+                  No se encontraron variantes que coincidan con “{q}”.
                 </td>
               </tr>
             ) : (
               rows.map((stat, idx) => (
                 <tr
-                  key={`${stat.descripcion}-${idx}`}
+                  key={`${stat.descripcion}|${stat.marca}|${stat.material}|${stat.modelo}|${idx}`}
                   className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-blue-50 transition-colors duration-150 border-b border-gray-200 last:border-b-0`}
                 >
                   <td className="px-4 py-3 font-medium text-gray-900 max-w-xs truncate">{stat.descripcion}</td>
+                  <td className="px-4 py-3 text-gray-800">{stat.marca ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-800">{stat.material ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-800">{stat.modelo ?? "—"}</td>
+
                   <td className="px-4 py-3 text-right text-green-600 font-semibold">
                     {formatPrice(stat.precioMin)}
                   </td>

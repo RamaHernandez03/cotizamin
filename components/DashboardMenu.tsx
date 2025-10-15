@@ -1,4 +1,3 @@
-// src/components/DashboardMenu.tsx
 "use client";
 
 import Link from "next/link";
@@ -24,7 +23,7 @@ export default function DashboardMenu({ onNavigate }: { onNavigate?: () => void 
   ];
 
   return (
-    <nav className="space-y-2">
+    <nav className="space-y-2 pt-2 pb-8">
       {menuItems.map((item) => {
         const active = isActive(item.href);
         return (

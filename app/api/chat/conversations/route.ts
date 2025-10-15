@@ -4,16 +4,19 @@ import { getSessionUser } from "@/lib/auth";
 
 /* ========================== HELPERS ========================== */
 
+/** Upsert de cliente por email (evita carreras si no existe). */
 async function ensureAdminClienteByEmail(email: string, name?: string | null) {
-  const found = await prisma.cliente.findUnique({ where: { email }, select: { id_cliente: true } });
-  if (found) return found.id_cliente;
-  const created = await prisma.cliente.create({
-    data: { nombre: name || email.split("@")[0], email, email_verificado: new Date() },
+  const baseName = name || email.split("@")[0];
+  const up = await prisma.cliente.upsert({
+    where: { email },
+    update: {},
+    create: { nombre: baseName, email, email_verificado: new Date() },
     select: { id_cliente: true },
   });
-  return created.id_cliente;
+  return up.id_cliente;
 }
 
+/** Resuelve el peer admin desde env o por email (con upsert seguro). */
 async function resolveAdminPeerId() {
   const adminId = process.env.ADMIN_USER_ID || "";
   if (adminId) {
@@ -28,27 +31,39 @@ async function resolveAdminPeerId() {
   throw new Error("ADMIN_NOT_CONFIGURED: Configure ADMIN_USER_ID o ADMIN_EMAIL.");
 }
 
-// Asegura que exista un cliente correspondiente a la sesión actual
+/** Asegura que exista un cliente con el id de sesión; si no, upsert por email o crea explícito. */
 async function ensureSessionClienteId(me: { id: string; email?: string | null; name?: string | null }) {
+  // 1) ¿Existe por id_cliente?
   const byId = await prisma.cliente.findUnique({
     where: { id_cliente: me.id },
     select: { id_cliente: true },
   });
   if (byId) return byId.id_cliente;
 
+  // 2) Si hay email, upsert por email (evita duplicados por condiciones de carrera)
   if (me.email) {
-    const byEmail = await prisma.cliente.findUnique({
+    const up = await prisma.cliente.upsert({
       where: { email: me.email },
+      update: {
+        // Si quisieras sincronizar nombre, podría ir aquí condicional
+      },
+      create: {
+        id_cliente: me.id,
+        nombre: me.name || me.email.split("@")[0],
+        email: me.email,
+        email_verificado: new Date(),
+      },
       select: { id_cliente: true },
     });
-    if (byEmail) return byEmail.id_cliente;
+    return up.id_cliente;
   }
 
+  // 3) Sin email: crea con id explícito
   const created = await prisma.cliente.create({
     data: {
       id_cliente: me.id,
-      nombre: me.name || (me.email ? me.email.split("@")[0] : "Usuario"),
-      email: me.email || `${me.id}@local.local`,
+      nombre: me.name || "Usuario",
+      email: `${me.id}@local.local`,
       email_verificado: new Date(),
     },
     select: { id_cliente: true },
@@ -59,16 +74,20 @@ async function ensureSessionClienteId(me: { id: string; email?: string | null; n
 /* ============================ GET ============================ */
 /**
  * GET /api/chat/conversations?take=30&cursorId=<conversationId>
- * Paginación por id (whereUnique). Orden estable: updatedAt DESC, id DESC.
+ * Paginación keyset estable por (updatedAt DESC, id DESC).
+ * - Si viene cursorId, se busca su updatedAt y se filtra:
+ *   (updatedAt < cursor.updatedAt) OR (updatedAt = cursor.updatedAt AND id < cursorId)
  */
 export async function GET(req: Request) {
   try {
     const me = await getSessionUser().catch(() => null);
-    if (!me?.id)
+    if (!me?.id) {
       return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
 
     const url = new URL(req.url);
-    const take = Math.min(Number(url.searchParams.get("take") ?? 30), 100);
+    const takeRaw = Number(url.searchParams.get("take") ?? 30);
+    const take = Math.max(1, Math.min(takeRaw, 100)); // 1..100
     const cursorId = url.searchParams.get("cursorId") || null;
 
     const myClienteId = await ensureSessionClienteId({
@@ -77,11 +96,43 @@ export async function GET(req: Request) {
       name: (me as any).name,
     });
 
+    // Si hay cursorId, buscamos su updatedAt para construir el filtro keyset
+    let cursorUpdatedAt: Date | null = null;
+    if (cursorId) {
+      const cur = await prisma.conversation.findUnique({
+        where: { id: cursorId },
+        select: { updatedAt: true },
+      });
+      // Si el cursor no existe, devolvemos lista desde el principio
+      cursorUpdatedAt = cur?.updatedAt ?? null;
+    }
+
+    // Filtro base: soy participante
+    const baseWhere = {
+      participants: { some: { userId: myClienteId } },
+    };
+
+    // Filtro de paginación keyset si hay cursor válido
+    const whereWithCursor =
+      cursorId && cursorUpdatedAt
+        ? {
+            AND: [
+              baseWhere,
+              {
+                OR: [
+                  { updatedAt: { lt: cursorUpdatedAt } },
+                  { AND: [{ updatedAt: cursorUpdatedAt }, { id: { lt: cursorId } }] },
+                ],
+              },
+            ],
+          }
+        : baseWhere;
+
+    // Traemos (take + 1) para saber si hay siguiente página
     const convs = await prisma.conversation.findMany({
-      where: { participants: { some: { userId: myClienteId } } },
+      where: whereWithCursor,
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-      take,
-      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: take + 1,
       select: {
         id: true,
         updatedAt: true,
@@ -102,12 +153,13 @@ export async function GET(req: Request) {
       },
     });
 
-    const items = convs.map((c) => {
+    const hasMore = convs.length > take;
+    const sliced = hasMore ? convs.slice(0, take) : convs;
+
+    const items = sliced.map((c) => {
       const last = c.messages[0];
       const peer =
-        c.participants.find((p) => p.userId !== myClienteId) ||
-        c.participants[0] ||
-        null;
+        c.participants.find((p) => p.userId !== myClienteId) || c.participants[0] || null;
 
       return {
         id: c.id,
@@ -119,7 +171,7 @@ export async function GET(req: Request) {
       };
     });
 
-    const nextCursorId = convs.length === take ? convs[convs.length - 1].id : null;
+    const nextCursorId = hasMore ? sliced[sliced.length - 1].id : null;
 
     return NextResponse.json({ ok: true, items, nextCursorId });
   } catch (err: any) {
@@ -134,7 +186,9 @@ export async function GET(req: Request) {
 /* ============================ POST ============================ */
 /**
  * POST /api/chat/conversations
- * Crea/asegura una conversación (por participationId o por peerUserId/clienteUserId).
+ * Crea/asegura una conversación:
+ * - Caso 1: por participationId (una conversación por participación).
+ * - Caso 2: directa entre dos clientes (yo y peer).
  */
 type PostBody =
   | { participationId: string }
@@ -145,8 +199,9 @@ type PostBody =
 export async function POST(req: Request) {
   try {
     const me = await getSessionUser().catch(() => null);
-    if (!me?.id)
+    if (!me?.id) {
       return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
 
     const body = (await req.json()) as PostBody;
     const { participationId, peerUserId, clienteUserId } = body as any;
@@ -157,28 +212,31 @@ export async function POST(req: Request) {
       name: (me as any).name,
     });
 
-    // === CASO 1: desde una participación ===
+    // === CASO 1: desde una participación (preferido) ===
     if (participationId) {
       const participation = await prisma.cotizacionParticipacion.findUnique({
         where: { id: participationId },
         select: { id: true, proveedor_id: true },
       });
-      if (!participation)
+      if (!participation) {
         return NextResponse.json(
           { ok: false, error: "PARTICIPATION_NOT_FOUND" },
           { status: 404 }
         );
+      }
 
       const proveedorId = participation.proveedor_id;
       const otherId =
         myClienteId === proveedorId ? await resolveAdminPeerId() : proveedorId;
 
-      if (otherId === myClienteId)
+      if (otherId === myClienteId) {
         return NextResponse.json(
           { ok: false, error: "CANNOT_CHAT_WITH_SELF" },
           { status: 400 }
         );
+      }
 
+      // Aseguramos que el peer exista
       const peerOk = await prisma.cliente.findUnique({
         where: { id_cliente: otherId },
         select: { id_cliente: true },
@@ -190,12 +248,14 @@ export async function POST(req: Request) {
         );
       }
 
+      // Garantizamos unicidad por participationId
       const existing = await prisma.conversation.findFirst({
         where: { participationId: participation.id },
-        include: { participants: true, messages: { orderBy: { createdAt: "desc" }, take: 1 } },
+        select: { id: true },
       });
 
       if (existing) {
+        // Nos aseguramos de que ambos participantes estén linkeados (idempotente)
         await prisma.conversationParticipant.createMany({
           data: [
             { conversationId: existing.id, userId: myClienteId },
@@ -203,53 +263,115 @@ export async function POST(req: Request) {
           ],
           skipDuplicates: true,
         });
-        return NextResponse.json({ ok: true, conversation: existing });
+
+        const conv = await prisma.conversation.findUnique({
+          where: { id: existing.id },
+          include: {
+            participants: {
+              select: {
+                userId: true,
+                user: { select: { nombre: true, email: true } },
+              },
+            },
+            messages: { orderBy: { createdAt: "desc" }, take: 1 },
+            participation: {
+              select: { id: true, proyecto: true, comentario: true, resultado: true },
+            },
+          },
+        });
+
+        return NextResponse.json({ ok: true, conversation: conv });
       }
 
+      // Crear la conversación en una sola transacción
       const created = await prisma.conversation.create({
         data: {
           participationId: participation.id,
           participants: { create: [{ userId: myClienteId }, { userId: otherId }] },
         },
-        include: { participants: true, messages: true },
+        include: {
+          participants: {
+            select: {
+              userId: true,
+              user: { select: { nombre: true, email: true } },
+            },
+          },
+          messages: true,
+          participation: {
+            select: { id: true, proyecto: true, comentario: true, resultado: true },
+          },
+        },
       });
 
       return NextResponse.json({ ok: true, conversation: created }, { status: 201 });
     }
 
-    // === CASO 2: conversación directa ===
+    // === CASO 2: conversación directa entre dos clientes ===
     const peer = peerUserId ?? clienteUserId;
-    if (!peer)
+    if (!peer) {
       return NextResponse.json(
         { ok: false, error: "MISSING_PEER_USER_ID" },
         { status: 400 }
       );
-    if (peer === myClienteId)
+    }
+    if (peer === myClienteId) {
       return NextResponse.json(
         { ok: false, error: "CANNOT_CHAT_WITH_SELF" },
         { status: 400 }
       );
+    }
 
     const peerCliente = await prisma.cliente.findUnique({
       where: { id_cliente: peer },
       select: { id_cliente: true },
     });
-    if (!peerCliente)
+    if (!peerCliente) {
       return NextResponse.json({ ok: false, error: "PEER_NOT_FOUND" }, { status: 404 });
+    }
 
+    // ¿Ya existe una conversación directa conmigo?
     const existing = await prisma.conversation.findFirst({
       where: {
         participants: { some: { userId: myClienteId } },
         AND: { participants: { some: { userId: peer } } },
+        participationId: null, // directa (no vinculada a participación)
       },
-      include: { participants: true, messages: { orderBy: { createdAt: "desc" }, take: 1 } },
+      select: { id: true },
     });
 
-    if (existing) return NextResponse.json({ ok: true, conversation: existing });
+    if (existing) {
+      const conv = await prisma.conversation.findUnique({
+        where: { id: existing.id },
+        include: {
+          participants: {
+            select: {
+              userId: true,
+              user: { select: { nombre: true, email: true } },
+            },
+          },
+          messages: { orderBy: { createdAt: "desc" }, take: 1 },
+          participation: {
+            select: { id: true, proyecto: true, comentario: true, resultado: true },
+          },
+        },
+      });
+      return NextResponse.json({ ok: true, conversation: conv });
+    }
 
     const created = await prisma.conversation.create({
       data: { participants: { create: [{ userId: myClienteId }, { userId: peer }] } },
-      include: { participants: true, messages: true },
+      include: {
+        participants: {
+          select: {
+            userId: true,
+            user: { select: { nombre: true, email: true } },
+          },
+        },
+        messages: true,
+        participation: {
+          select: { id: true, proyecto: true, comentario: true, resultado: true },
+        },
+      },
     });
 
     return NextResponse.json({ ok: true, conversation: created }, { status: 201 });

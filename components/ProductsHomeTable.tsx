@@ -5,12 +5,24 @@ import ProductsTableClient from "@/components/ProductsTableClient";
 /* ===== Tipos ===== */
 type ProductRow = {
   descripcion: string;
+  marca: string | null;
+  material: string | null;
+  modelo: string | null;
+  norma_tecnica: string | null;
+  unidad: string | null;
   miPrecio: number;
   fecha_actualizacion: Date | null;
+  variant_hash_hex: string; // clave de variante (sha256 en hex)
 };
 
 type ProductStats = {
   descripcion: string;
+  marca: string | null;
+  material: string | null;
+  modelo: string | null;
+  norma_tecnica: string | null;
+  unidad: string | null;
+
   precioMin: number;
   precioMax: number;
   precioPromedio: number;
@@ -26,106 +38,234 @@ type SearchedProduct = {
 };
 
 /*
-  OPTIMIZACIÓN:
-  - Trae TODOS los productos activos del proveedor.
-  - Calcula stats de mercado SOLO para esas descripciones (1 precio por proveedor).
+  OPTIMIZACIÓN VARIANTES (versión SQL):
+  - “Mi última por variante” con DISTINCT ON (variant_hash) ORDER BY fecha_actualizacion DESC.
+  - Mercado en una sola query con variant_hash IN (...).
+  - Sin OR gigantes ni deduplicación en Node.
   - Cache 60s con tag por proveedor.
-  - Guardarraíl MAX_DESCS para volumen extremo.
+  - Guardarraíl MAX_VARIANTS por seguridad.
 */
-const MAX_DESCS = 5000;
+const MAX_VARIANTS = 5000;
+
+/* ===== Helpers ===== */
+function bufToHex(b: Uint8Array | Buffer | null): string {
+  if (!b) return "";
+  // @ts-ignore
+  const buf: Buffer = Buffer.isBuffer(b) ? b : Buffer.from(b);
+  return buf.toString("hex");
+}
+
+function makeStatsFallbackFromMine(mine: ProductRow): ProductStats {
+  const my = mine.miPrecio || 0;
+  return {
+    descripcion: mine.descripcion,
+    marca: mine.marca,
+    material: mine.material,
+    modelo: mine.modelo,
+    norma_tecnica: mine.norma_tecnica,
+    unidad: mine.unidad,
+
+    precioMin: my,
+    precioMax: my,
+    precioPromedio: my,
+    miPrecio: my,
+    totalProveedores: my > 0 ? 1 : 0,
+    fecha_actualizacion: mine.fecha_actualizacion ?? null,
+  };
+}
+
+/* ===== Query crudas (Postgres) ===== */
+
+/**
+ * Devuelve UNA fila por variante del proveedor (la más reciente por fecha_actualizacion).
+ * Calcula variant_hash = sha256(variant_key_norm) on the fly.
+ * IMPORTANTE: Tabla citada como "Producto" (con comillas) para respetar el nombre real en Postgres.
+ */
+async function getMyLatestPerVariant(proveedorId: string): Promise<ProductRow[]> {
+  type Row = {
+    descripcion: string;
+    marca: string | null;
+    material: string | null;
+    modelo: string | null;
+    norma_tecnica: string | null;
+    unidad: string | null;
+    precio_actual: number | null;
+    fecha_actualizacion: Date | null;
+    variant_hash: Buffer; // bytea -> Buffer
+  };
+
+  const rows = await prisma.$queryRaw<Row[]>`
+    WITH my AS (
+      SELECT
+        /* hash de la clave normalizada */
+        digest(
+          concat_ws('||',
+            lower(trim("descripcion")),
+            coalesce(lower(trim("marca")), ''),
+            coalesce(lower(trim("material")), ''),
+            coalesce(lower(trim("modelo")), ''),
+            coalesce(lower(trim("norma_tecnica")), ''),
+            coalesce(lower(trim("unidad")), '')
+          ),
+          'sha256'
+        ) AS variant_hash,
+        "descripcion", "marca", "material", "modelo", "norma_tecnica", "unidad",
+        "precio_actual", "fecha_actualizacion"
+      FROM "Producto"
+      WHERE "proveedor_id" = ${proveedorId}
+    )
+    SELECT DISTINCT ON (variant_hash)
+      descripcion, marca, material, modelo, norma_tecnica, unidad,
+      precio_actual, fecha_actualizacion, variant_hash
+    FROM my
+    ORDER BY variant_hash, fecha_actualizacion DESC;
+  `;
+
+  return rows.map((r) => ({
+    descripcion: r.descripcion,
+    marca: r.marca,
+    material: r.material,
+    modelo: r.modelo,
+    norma_tecnica: r.norma_tecnica,
+    unidad: r.unidad,
+    miPrecio: Number(r.precio_actual ?? 0),
+    fecha_actualizacion: r.fecha_actualizacion ?? null,
+    variant_hash_hex: bufToHex(r.variant_hash),
+  }));
+}
+
+/**
+ * Dado un set de variant_hash (bytea[]), calcula:
+ * - Un precio por proveedor (mínimo)
+ * - Reduce a nivel variante: min/max/avg y total de proveedores
+ * IMPORTANTE: Tabla citada como "Producto".
+ */
+async function getMarketStatsForHashes(variantHashesHex: string[]): Promise<
+  Record<
+    string,
+    {
+      precioMin: number;
+      precioMax: number;
+      precioPromedio: number;
+      totalProveedores: number;
+    }
+  >
+> {
+  if (variantHashesHex.length === 0) return {};
+
+  // Convertimos los hex a bytea (Buffer) para pasarlos como array a PG
+  const byteaArray = variantHashesHex.map((hex) => Buffer.from(hex, "hex"));
+
+  type Row = {
+    variant_hash: Buffer;
+    precio_min: number | null;
+    precio_max: number | null;
+    precio_prom: number | null;
+    total_proveedores: number;
+  };
+
+  const rows = await prisma.$queryRaw<Row[]>`
+    WITH base AS (
+      SELECT
+        digest(
+          concat_ws('||',
+            lower(trim("descripcion")),
+            coalesce(lower(trim("marca")), ''),
+            coalesce(lower(trim("material")), ''),
+            coalesce(lower(trim("modelo")), ''),
+            coalesce(lower(trim("norma_tecnica")), ''),
+            coalesce(lower(trim("unidad")), '')
+          ),
+          'sha256'
+        ) AS variant_hash,
+        "proveedor_id",
+        MIN("precio_actual") AS precio_min
+      FROM "Producto"
+      WHERE "precio_actual" > 0
+        AND digest(
+          concat_ws('||',
+            lower(trim("descripcion")),
+            coalesce(lower(trim("marca")), ''),
+            coalesce(lower(trim("material")), ''),
+            coalesce(lower(trim("modelo")), ''),
+            coalesce(lower(trim("norma_tecnica")), ''),
+            coalesce(lower(trim("unidad")), '')
+          ),
+          'sha256'
+        ) = ANY(${byteaArray}::bytea[])
+      GROUP BY variant_hash, "proveedor_id"
+    )
+    SELECT
+      variant_hash,
+      MIN(precio_min) AS precio_min,
+      MAX(precio_min) AS precio_max,
+      AVG(precio_min) AS precio_prom,
+      COUNT(*)        AS total_proveedores
+    FROM base
+    GROUP BY variant_hash;
+  `;
+
+  const out: Record<
+    string,
+    { precioMin: number; precioMax: number; precioPromedio: number; totalProveedores: number }
+  > = {};
+
+  for (const r of rows) {
+    const key = bufToHex(r.variant_hash);
+    const min = Number(r.precio_min ?? 0);
+    const max = Number(r.precio_max ?? 0);
+    const avg = Number(r.precio_prom ?? 0);
+    const cnt = Number(r.total_proveedores ?? 0);
+    out[key] = {
+      precioMin: min,
+      precioMax: max,
+      precioPromedio: avg,
+      totalProveedores: cnt,
+    };
+  }
+
+  return out;
+}
+
+/* ===== Cacheadas ===== */
 
 const getAllProductStats = unstable_cache(
   async (proveedorId: string): Promise<ProductStats[]> => {
-    // 1) Mis productos activos (sin límite)
-    const misProductosFromDb = await prisma.producto.findMany({
-      where: { proveedor_id: proveedorId, estado: "Activo" },
-      select: {
-        descripcion: true,
-        precio_actual: true,
-        fecha_actualizacion: true,
-      },
-      orderBy: { fecha_actualizacion: "desc" },
-    });
+    // 1) Mis últimas por variante (DB dedup)
+    const mineAll = await getMyLatestPerVariant(proveedorId);
+    if (mineAll.length === 0) return [];
 
-    const misProductosRaw: ProductRow[] = misProductosFromDb.map((p) => ({
-      descripcion: p.descripcion,
-      miPrecio: Number(p.precio_actual ?? 0),
-      fecha_actualizacion: p.fecha_actualizacion ?? null,
-    }));
+    // 1.1) Guardarraíl por volumen extremo
+    const mine = mineAll.slice(0, MAX_VARIANTS);
 
-    if (misProductosRaw.length === 0) return [];
+    // 2) Mercado en UNA query por variant_hash
+    const hashes = mine.map((m) => m.variant_hash_hex).filter(Boolean);
+    const mercado = await getMarketStatsForHashes(hashes);
 
-    // 2) Deduplicar por descripción (quedarse con el más reciente)
-    const misPorDescripcion = new Map<string, ProductRow>();
-    for (const p of misProductosRaw) {
-      const prev = misPorDescripcion.get(p.descripcion);
-      const prevTs = prev?.fecha_actualizacion ? new Date(prev.fecha_actualizacion).getTime() : -1;
-      const curTs = p.fecha_actualizacion ? new Date(p.fecha_actualizacion).getTime() : -1;
-      if (!prev || curTs > prevTs) misPorDescripcion.set(p.descripcion, p);
-    }
-
-    // 2.1) Lista (acotada por guardarraíl)
-    const allDescs = Array.from(misPorDescripcion.keys());
-    const targetDescs = allDescs.slice(0, MAX_DESCS);
-
-    // 3) Stats de mercado SOLO sobre esas descripciones (1 precio x proveedor)
-    const mercadoPorProv = await prisma.producto.groupBy({
-      by: ["descripcion", "proveedor_id"],
-      where: {
-        estado: "Activo",
-        precio_actual: { gt: 0 },
-        descripcion: { in: targetDescs },
-      },
-      _min: { precio_actual: true },
-    });
-
-    // 4) Reducir a nivel descripción
-    const reduceMap = new Map<string, { precios: number[]; proveedores: number }>();
-    for (const g of mercadoPorProv) {
-      const desc = g.descripcion;
-      const precioProv = g._min.precio_actual ?? 0;
-      if (precioProv <= 0) continue;
-      const r = reduceMap.get(desc) ?? { precios: [], proveedores: 0 };
-      r.precios.push(Number(precioProv));
-      r.proveedores += 1;
-      reduceMap.set(desc, r);
-    }
-
-    // 5) Cruzar MIS productos con stats
-    const out: ProductStats[] = [];
-    for (const desc of targetDescs) {
-      const mine = misPorDescripcion.get(desc)!;
-      const r = reduceMap.get(desc);
-
-      if (!r || r.precios.length === 0) {
-        const my = mine.miPrecio || 0;
-        out.push({
-          descripcion: desc,
-          precioMin: my,
-          precioMax: my,
-          precioPromedio: my,
-          miPrecio: my,
-          totalProveedores: 1,
-          fecha_actualizacion: mine.fecha_actualizacion ?? null,
-        });
-      } else {
-        const precios = r.precios;
-        const min = Math.min(...precios);
-        const max = Math.max(...precios);
-        const avg = precios.reduce((a, b) => a + b, 0) / precios.length;
-        out.push({
-          descripcion: desc,
-          precioMin: min,
-          precioMax: max,
-          precioPromedio: avg,
-          miPrecio: mine.miPrecio || 0,
-          totalProveedores: r.proveedores,
-          fecha_actualizacion: mine.fecha_actualizacion ?? null,
-        });
+    // 3) Cruce
+    const out: ProductStats[] = mine.map((m) => {
+      const agg = mercado[m.variant_hash_hex];
+      if (!agg || agg.totalProveedores === 0) {
+        return makeStatsFallbackFromMine(m);
       }
-    }
+      return {
+        descripcion: m.descripcion,
+        marca: m.marca,
+        material: m.material,
+        modelo: m.modelo,
+        norma_tecnica: m.norma_tecnica,
+        unidad: m.unidad,
 
-    // 6) Orden por última actualización
+        precioMin: agg.precioMin,
+        precioMax: agg.precioMax,
+        precioPromedio: agg.precioPromedio,
+        miPrecio: m.miPrecio || 0,
+        totalProveedores: agg.totalProveedores,
+        fecha_actualizacion: m.fecha_actualizacion ?? null,
+      };
+    });
+
+    // 4) Orden por última actualización
     out.sort((a, b) => {
       const da = a.fecha_actualizacion ? new Date(a.fecha_actualizacion).getTime() : 0;
       const db = b.fecha_actualizacion ? new Date(b.fecha_actualizacion).getTime() : 0;
@@ -136,7 +276,7 @@ const getAllProductStats = unstable_cache(
   },
   {
     revalidate: 60,
-    tags: (proveedorId: string) => [`proveedor:${proveedorId}:product-stats:all:v2`],
+    tags: (proveedorId: string) => [`proveedor:${proveedorId}:product-stats:variants:v2`], // versión bump
   } as any
 );
 
@@ -176,7 +316,7 @@ export async function ProductStatsTable({ proveedorId }: { proveedorId: string }
         <h2 className="text-lg font-bold text-[#00152F] mb-4">📦 Mis Productos</h2>
         <div className="text-center py-12">
           <div className="text-5xl mb-3 opacity-70">📭</div>
-          <p className="text-gray-700 font-semibold mb-1">No hay productos activos</p>
+          <p className="text-gray-700 font-semibold mb-1">No hay productos</p>
           <p className="text-sm text-gray-500">Carga productos para ver la comparativa de mercado</p>
         </div>
       </div>
