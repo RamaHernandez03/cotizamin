@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
+import crypto from "crypto";
 
 /* ========================== HELPERS ========================== */
 
@@ -44,9 +45,7 @@ async function ensureSessionClienteId(me: { id: string; email?: string | null; n
   if (me.email) {
     const up = await prisma.cliente.upsert({
       where: { email: me.email },
-      update: {
-        // Si quisieras sincronizar nombre, podría ir aquí condicional
-      },
+      update: {},
       create: {
         id_cliente: me.id,
         nombre: me.name || me.email.split("@")[0],
@@ -74,9 +73,8 @@ async function ensureSessionClienteId(me: { id: string; email?: string | null; n
 /* ============================ GET ============================ */
 /**
  * GET /api/chat/conversations?take=30&cursorId=<conversationId>
- * Paginación keyset estable por (updatedAt DESC, id DESC).
- * - Si viene cursorId, se busca su updatedAt y se filtra:
- *   (updatedAt < cursor.updatedAt) OR (updatedAt = cursor.updatedAt AND id < cursorId)
+ * Paginación keyset por (updatedAt DESC, id DESC).
+ * Devuelve 304 Not Modified si el ETag coincide (no hay cambios).
  */
 export async function GET(req: Request) {
   try {
@@ -103,7 +101,6 @@ export async function GET(req: Request) {
         where: { id: cursorId },
         select: { updatedAt: true },
       });
-      // Si el cursor no existe, devolvemos lista desde el principio
       cursorUpdatedAt = cur?.updatedAt ?? null;
     }
 
@@ -158,13 +155,9 @@ export async function GET(req: Request) {
 
     const items = sliced.map((c) => {
       const last = c.messages[0];
-      const peer =
-        c.participants.find((p) => p.userId !== myClienteId) || c.participants[0] || null;
-
       return {
         id: c.id,
         proyecto: c.participation?.proyecto || "Venta",
-        peerName: peer?.user?.nombre || peer?.user?.email || null,
         lastMessage: last?.body || null,
         updatedAt: c.updatedAt.toISOString(),
         saleId: c.participation?.id ?? null,
@@ -173,7 +166,24 @@ export async function GET(req: Request) {
 
     const nextCursorId = hasMore ? sliced[sliced.length - 1].id : null;
 
-    return NextResponse.json({ ok: true, items, nextCursorId });
+    // ====================== ETag ======================
+    // VersionKey basado en ids + updatedAt (suficiente para "cambió/no cambió")
+    const versionKey = items.map((x) => `${x.id}:${x.updatedAt}`).join("|");
+    const etag = crypto.createHash("sha1").update(versionKey).digest("hex");
+    const ifNoneMatch = (req as any).headers?.get?.("if-none-match") ?? null;
+
+    if (ifNoneMatch && ifNoneMatch === etag) {
+      const res304 = new NextResponse(null, { status: 304 });
+      res304.headers.set("ETag", etag);
+      res304.headers.set("Cache-Control", "private, max-age=0, must-revalidate");
+      return res304;
+    }
+    // =================================================
+
+    const res = NextResponse.json({ ok: true, items, nextCursorId });
+    res.headers.set("ETag", etag);
+    res.headers.set("Cache-Control", "private, max-age=0, must-revalidate");
+    return res;
   } catch (err: any) {
     console.error("GET /api/chat/conversations ERROR:", err);
     return NextResponse.json(

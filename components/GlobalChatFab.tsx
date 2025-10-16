@@ -20,7 +20,10 @@ type ConversationRow = {
 
 const AZUL = "#00152F";
 const AZUL_CLARO = "#1a2942";
+const ETAG_KEY = "etag:/api/chat/conversations";
+const DATA_KEY = "data:/api/chat/conversations";
 
+/* ===================== Utils ===================== */
 async function safeJson(res: Response) {
   const txt = await res.text();
   if (!txt) return null;
@@ -61,6 +64,26 @@ function formatTitle(c?: Pick<ConversationRow, "producto_desc" | "codigo_interno
   return right ? `${base} - ${right}` : base;
 }
 
+function getCachedConvs(): { ok: boolean; items: any[] } | null {
+  try {
+    const raw = sessionStorage.getItem(DATA_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedConvs(json: any, etag: string | null) {
+  try {
+    sessionStorage.setItem(DATA_KEY, JSON.stringify(json));
+    if (etag) sessionStorage.setItem(ETAG_KEY, etag);
+  } catch {
+    // ignore quota errors
+  }
+}
+
+/* ===================== Component ===================== */
+
 type OpenChatDetail = {
   conversationId: string;
   producto_desc?: string | null;
@@ -94,47 +117,83 @@ export default function GlobalChatFab() {
     return `${d}d`;
   }
 
-  const fetchList = async () => {
+  const fetchList = async (signal?: AbortSignal) => {
     try {
+      const prevEtag = sessionStorage.getItem(ETAG_KEY) || undefined;
+
       const res = await fetch("/api/chat/conversations", {
         cache: "no-store",
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", ...(prevEtag ? { "If-None-Match": prevEtag } : {}) },
+        signal,
       });
-      if (!res.ok) {
-        let errMsg = res.statusText || `HTTP ${res.status}`;
-        try {
-          const maybe = await res.clone().json();
-          errMsg = (maybe as any)?.error || errMsg;
-        } catch {}
-        throw new Error(errMsg);
+
+      if (res.status === 304) {
+        const cached = getCachedConvs();
+        if (cached) {
+          const items: ConversationRow[] = cached.items
+            .map((x: any): ConversationRow => ({
+              id: x.id,
+              proyecto: x.proyecto ?? "Venta",
+              peerName: x.peerName ?? null,
+              lastMessage: x.lastMessage ?? null,
+              unreadCount: x.unreadCount ?? 0,
+              updatedAt: x.updatedAt ?? null,
+              saleId: x.saleId ?? null,
+              producto_desc: x.producto_desc ?? null,
+              codigo_interno: x.codigo_interno ?? null,
+            }))
+            .sort((a: ConversationRow, b: ConversationRow) => {
+              const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+              const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+              return tb - ta;
+            });
+          setConvs(items);
+          if (activeId) {
+            const current = items.find((i) => i.id === activeId);
+            setActiveTitle(formatTitle(current || undefined));
+          }
+          return;
+        }
+        // si no hay cache, forzamos un refetch sin ETag:
+        return await fetchList(signal);
       }
-      const data = await safeJson(res);
-      if (!data || (data as any).ok !== true || !Array.isArray((data as any).items)) {
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || res.statusText || `HTTP ${res.status}`);
+      }
+
+      const json = await safeJson(res);
+      const etag = res.headers.get("ETag");
+      if (json?.ok === true && Array.isArray(json.items)) {
+        setCachedConvs(json, etag);
+        const items: ConversationRow[] = json.items
+          .map((x: any): ConversationRow => ({
+            id: x.id,
+            proyecto: x.proyecto ?? "Venta",
+            peerName: x.peerName ?? null,
+            lastMessage: x.lastMessage ?? null,
+            unreadCount: x.unreadCount ?? 0,
+            updatedAt: x.updatedAt ?? null,
+            saleId: x.saleId ?? null,
+            producto_desc: x.producto_desc ?? null,
+            codigo_interno: x.codigo_interno ?? null,
+          }))
+          .sort((a: ConversationRow, b: ConversationRow) => {
+            const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+            const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+            return tb - ta;
+          });
+        setConvs(items);
+        if (activeId) {
+          const current = items.find((i) => i.id === activeId);
+          setActiveTitle(formatTitle(current || undefined));
+        }
+      } else {
         throw new Error("Formato inesperado de la respuesta");
       }
-      const items: ConversationRow[] = (data as any).items
-        .map((x: any): ConversationRow => ({
-          id: x.id,
-          proyecto: x.proyecto ?? x.title ?? "Venta",
-          peerName: x.peerName ?? x.proveedorNombre ?? x.clienteNombre ?? null,
-          lastMessage: x.lastMessage ?? x.preview ?? null,
-          unreadCount: x.unreadCount ?? 0,
-          updatedAt: x.updatedAt ?? x.lastMessageAt ?? null,
-          saleId: x.saleId ?? x.ventaId ?? null,
-          producto_desc: x.producto_desc ?? x.productoDescripcion ?? null,
-          codigo_interno: x.codigo_interno ?? x.codigoInterno ?? null,
-        }))
-        .sort((a: ConversationRow, b: ConversationRow) => {
-          const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-          const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-          return tb - ta;
-        });
-      setConvs(items);
-      if (activeId) {
-        const current = items.find((i) => i.id === activeId);
-        setActiveTitle(formatTitle(current || undefined));
-      }
     } catch (e: any) {
+      if (e?.name === "AbortError") return;
       setErrorList(e?.message || "Error desconocido");
     } finally {
       setLoading(false);
@@ -143,22 +202,57 @@ export default function GlobalChatFab() {
 
   useEffect(() => setMounted(true), []);
 
-  // Polling
+  // Polling con control de visibilidad y sin solapar requests
   useEffect(() => {
-    let baseInterval: ReturnType<typeof setInterval> | null = null;
-    let openInterval: ReturnType<typeof setInterval> | null = null;
-    setLoading(true);
-    fetchList();
-    baseInterval = setInterval(fetchList, 30000);
-    if (open) {
-      fetchList();
-      openInterval = setInterval(fetchList, 20000);
-    }
-    return () => {
-      if (baseInterval) clearInterval(baseInterval);
-      if (openInterval) clearInterval(openInterval);
+    let mounted = true;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let openIntervalId: ReturnType<typeof setInterval> | null = null;
+    let controller: AbortController | null = null;
+
+    const tick = async () => {
+      if (!mounted) return;
+      if (controller) controller.abort(); // cancelamos la anterior si seguía en vuelo
+      controller = new AbortController();
+      setLoading(true);
+      await fetchList(controller.signal);
     };
-  }, [open]);
+
+    // primer fetch inmediato
+    tick();
+
+    const computeBaseMs = () => {
+      if (document.visibilityState === "hidden") return 60000; // 60s en background
+      if (open) return 20000;                                  // 20s si el panel está abierto
+      return 30000;                                            // 30s si está cerrado
+    };
+
+    const setupIntervals = () => {
+      if (intervalId) clearInterval(intervalId);
+      if (openIntervalId) clearInterval(openIntervalId);
+
+      const base = computeBaseMs();
+      intervalId = setInterval(tick, base);
+      if (open && document.visibilityState === "visible") {
+        openIntervalId = setInterval(tick, 20000);
+      }
+    };
+
+    setupIntervals();
+
+    const onVisibility = () => {
+      setupIntervals();
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      mounted = false;
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (intervalId) clearInterval(intervalId);
+      if (openIntervalId) clearInterval(openIntervalId);
+      if (controller) controller.abort();
+    };
+  }, [open, activeId]);
 
   const totalUnread = useMemo(
     () => convs.reduce((acc, c) => acc + (c.unreadCount || 0), 0),
@@ -204,9 +298,8 @@ export default function GlobalChatFab() {
   if (status !== "authenticated" || !mounted) return null;
 
   const body = (
-    // Wrapper del portal SIN overflow-hidden, para no recortar en borde derecho
     <div className="fixed inset-0 z-[9999] pointer-events-none">
-      {/* Ancla del FAB en la esquina */}
+      {/* FAB */}
       <div className="absolute bottom-6 right-6 pointer-events-auto">
         <button
           onClick={() => {
