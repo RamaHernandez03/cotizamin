@@ -1,16 +1,17 @@
+// app/dashboard/notifications/page.tsx
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
-import { unstable_noStore as noStore } from "next/cache";
+import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
-import NotificationsWatcher from "@/components/NotificationsWatcher";
+import NotificationWatcher from "@/components/NotificationWatcher";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import Image from "next/image";
 import NotificationsImage from "../../../public/images/Notifications.jpeg";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 30; // Revalidar cada 30 segundos
 
 /* ========================= Tipos ========================= */
 type Prioridad = "alta" | "media" | "baja";
@@ -23,22 +24,93 @@ type Recomendacion = {
   prioridad: Prioridad;
 };
 
-type RecoResponse = {
-  ok: boolean;
-  cliente_id: string | null;
-  fecha_analisis: string | null;
-  total_recomendaciones: number;
-  recomendaciones: Recomendacion[];
-  resumen?: { nota_general?: string };
+type AlertaDemanda = {
+  id: string;
+  fecha: Date;
+  proyecto: string;
+  comentario: string | null;
+  sugerencia: string | null;
 };
 
-/* ========================= Utils ========================= */
-async function getBaseFromRequestHeaders() {
-  const h = await headers();
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const host = h.get("x-forwarded-host") ?? h.get("host")!;
-  return `${proto}://${host}`;
-}
+/* ========================= Funciones Cacheadas ========================= */
+
+// Cache de recomendaciones (30 segundos)
+const getCachedRecommendations = unstable_cache(
+  async (clienteId: string) => {
+    const batch = await prisma.recommendationBatch.findFirst({
+      where: { cliente_id: clienteId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        items: {
+          select: {
+            tipo: true,
+            mensaje: true,
+            producto: true,
+            prioridad: true,
+          },
+        },
+      },
+    });
+
+    if (!batch) {
+      return {
+        fecha_analisis: null,
+        total: 0,
+        recomendaciones: [],
+        nota_general: null,
+      };
+    }
+
+    return {
+      fecha_analisis: batch.fecha_analisis?.toISOString() ?? null,
+      total: batch.total,
+      recomendaciones: batch.items.map(item => ({
+        tipo: item.tipo as Tipo,
+        mensaje: item.mensaje,
+        producto: item.producto,
+        prioridad: item.prioridad as Prioridad,
+      })),
+      nota_general: batch.nota_general,
+    };
+  },
+  ["recommendations"],
+  { 
+    revalidate: 30,
+    tags: ["recommendations"]
+  }
+);
+
+// Cache de alertas de demanda (60 segundos)
+const getCachedDemandAlerts = unstable_cache(
+  async (proveedorId: string, days: number) => {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    
+    return prisma.cotizacionParticipacion.findMany({
+      where: {
+        proveedor_id: proveedorId,
+        accion: "Demanda alta, oferta limitada",
+        fecha: { gte: since },
+      },
+      orderBy: { fecha: "desc" },
+      select: {
+        id: true,
+        fecha: true,
+        proyecto: true,
+        comentario: true,
+        sugerencia: true,
+      },
+      take: 100, // Limitar resultados
+    });
+  },
+  ["demand-alerts"],
+  { 
+    revalidate: 60,
+    tags: ["demand-alerts"]
+  }
+);
+
+/* ========================= Componentes UI ========================= */
 
 function PriorityBadge({ p }: { p: Prioridad }) {
   const map: Record<Prioridad, string> = {
@@ -58,92 +130,45 @@ function TipoIcon({ tipo }: { tipo: Tipo }) {
   return <span className="mr-2">{map[tipo] ?? "🔔"}</span>;
 }
 
-async function fetchRecos(base: string, clienteId: string): Promise<RecoResponse> {
-  const res = await fetch(`${base}/api/recommendations?cliente_id=${clienteId}`, {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    return {
-      ok: false,
-      cliente_id: clienteId,
-      fecha_analisis: null,
-      total_recomendaciones: 0,
-      recomendaciones: [],
-    };
-  }
-  return res.json();
-}
-
-/* ========================= Alertas de Demanda ========================= */
-type AlertaDemanda = {
-  id: string;
-  fecha: Date;
-  proyecto: string;
-  comentario: string | null;
-  sugerencia: string | null;
-};
-
 function parseFiltroFromProyecto(proyecto: string) {
   const idx = proyecto.indexOf("Alerta demanda:");
   if (idx === -1) return proyecto;
   return proyecto.slice(idx + "Alerta demanda:".length).trim();
 }
 
-async function fetchAlertasDemanda(proveedorId: string, days = 30): Promise<AlertaDemanda[]> {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  return prisma.cotizacionParticipacion.findMany({
-    where: {
-      proveedor_id: proveedorId,
-      accion: "Demanda alta, oferta limitada",
-      fecha: { gte: since },
-    },
-    orderBy: { fecha: "desc" },
-    select: {
-      id: true,
-      fecha: true,
-      proyecto: true,
-      comentario: true,
-      sugerencia: true,
-    },
-    take: 200,
-  });
-}
+/* ========================= Página Principal ========================= */
 
-/* ========================= Página ========================= */
 export default async function NotificationsPage() {
-  noStore(); // evitar cache del runtime
-
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
   const clienteId =
     (session.user as any)?.id_cliente ||
     (session.user as any)?.id ||
-    (session.user as any)?.userId ||
-    "3a036ad5-a1ca-4b74-9a55-b945157fd63e";
+    (session.user as any)?.userId;
 
-  // Construir base UNA sola vez
-  const base = await getBaseFromRequestHeaders();
+  if (!clienteId) {
+    redirect("/login");
+  }
 
-  // Paralelizar lo que no depende entre sí
-  const [data, metaJson, alertas] = await Promise.all([
-    fetchRecos(base, String(clienteId)),
-    fetch(`${base}/api/recommendations/latest?cliente_id=${clienteId}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { batchId: null }))
-      .catch(() => ({ batchId: null })),
-    fetchAlertasDemanda(String(clienteId), 30),
+  // Ejecutar queries en paralelo usando funciones cacheadas
+  const [data, alertas] = await Promise.all([
+    getCachedRecommendations(String(clienteId)),
+    getCachedDemandAlerts(String(clienteId), 30),
   ]);
 
   const recos = data.recomendaciones ?? [];
-  let countAlta = 0,
-    countMedia = 0,
-    countBaja = 0;
-  for (const r of recos) {
-    if (r.prioridad === "alta") countAlta++;
-    else if (r.prioridad === "media") countMedia++;
-    else countBaja++;
-  }
+  
+  // Calcular contadores eficientemente
+  const counts = recos.reduce(
+    (acc, r) => {
+      if (r.prioridad === "alta") acc.alta++;
+      else if (r.prioridad === "media") acc.media++;
+      else acc.baja++;
+      return acc;
+    },
+    { alta: 0, media: 0, baja: 0 }
+  );
 
   const lastAlerta = alertas[0]?.fecha ?? null;
   const totalAlertas = alertas.length;
@@ -151,10 +176,11 @@ export default async function NotificationsPage() {
   return (
     <div className="min-h-screen p-4 md:p-6">
       <div className="mx-auto max-w-7xl">
-        <NotificationsWatcher
+        {/* Watcher Unificado - NO mostrar modal en esta página */}
+        <NotificationWatcher
           clienteId={String(clienteId)}
-          initialBatchId={metaJson.batchId}
-          pollMs={10000}
+          checkIntervalMs={5 * 60 * 1000} // 5 minutos
+          showOnNotificationsPage={false}
         />
 
         {/* Header */}
@@ -192,7 +218,7 @@ export default async function NotificationsPage() {
                   <div>
                     <div className="font-semibold mb-1">Total Recomendaciones:</div>
                     <div className="text-blue-100">
-                      {(data.total_recomendaciones ?? recos.length)} Notificaciones
+                      {data.total} Notificaciones
                     </div>
                   </div>
 
@@ -206,26 +232,28 @@ export default async function NotificationsPage() {
                     <div className="flex gap-3 text-sm">
                       <span className="inline-flex text-blue-100 items-center gap-1">
                         <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
-                        Alta: {countAlta}
+                        Alta: {counts.alta}
                       </span>
                       <span className="inline-flex text-blue-100 items-center gap-1">
                         <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
-                        Media: {countMedia}
+                        Media: {counts.media}
                       </span>
                       <span className="inline-flex text-blue-100 items-center gap-1">
                         <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
-                        Baja: {countBaja}
+                        Baja: {counts.baja}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-6 p-4 bg-white/10 backdrop-blur-sm rounded-xl border border-white/20">
-                  <div className="text-sm font-semibold mb-2">Resumen del Sistema:</div>
-                  <div className="text-sm text-blue-100">
-                    {data?.resumen?.nota_general ?? "La IA generará recomendaciones para optimizar tu competitividad y catálogo."}
+                {data.nota_general && (
+                  <div className="mt-6 p-4 bg-white/10 backdrop-blur-sm rounded-xl border border-white/20">
+                    <div className="text-sm font-semibold mb-2">Resumen del Sistema:</div>
+                    <div className="text-sm text-blue-100">
+                      {data.nota_general}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="lg:flex-shrink-0 mt-8 lg:mt-0">

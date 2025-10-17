@@ -1,3 +1,4 @@
+// app/dashboard/layout.tsx
 import { ReactNode } from "react";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -5,7 +6,7 @@ import { redirect } from "next/navigation";
 import prisma from "@/lib/prisma";
 import TopNavbar from "@/components/TopNavbar";
 import DashboardMenu from "@/components/DashboardMenu";
-import NotificationsWatcher from "@/components/NotificationsWatcher";
+import NotificationWatcher from "@/components/NotificationWatcher";
 import GlobalChatFab from "@/components/GlobalChatFab";
 
 function WelcomeCard({ user, ruc }: { user: string; ruc: string }) {
@@ -57,7 +58,17 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   return (
     <div className="min-h-screen flex flex-col bg-white">
       <TopNavbar />
-      <NotificationsWatcher clienteId={String(clienteId)} pollMs={60000} />
+      
+      {/* 
+        Watcher Unificado:
+        - checkIntervalMs: 5 minutos (300000ms)
+        - showOnNotificationsPage: false (no mostrar modal en /notifications)
+      */}
+      <NotificationWatcher 
+        clienteId={String(clienteId)} 
+        checkIntervalMs={5 * 60 * 1000}
+        showOnNotificationsPage={false}
+      />
 
       {/* Contenido principal */}
       <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 px-3 sm:px-4 md:px-6 pt-4 md:pt-6 pb-8 w-full">
