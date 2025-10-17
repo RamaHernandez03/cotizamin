@@ -104,6 +104,7 @@ export default function GlobalChatFab() {
   const [justNew, setJustNew] = useState(false);
   const lastUnreadRef = useRef<number>(0);
   const justNewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   function timeAgo(iso?: string | null) {
     if (!iso) return "";
@@ -121,15 +122,19 @@ export default function GlobalChatFab() {
     try {
       const prevEtag = sessionStorage.getItem(ETAG_KEY) || undefined;
 
-      const res = await fetch("/api/chat/conversations", {
+      const res = await fetch("/api/chat/conversations?take=30", {
         cache: "no-store",
-        headers: { Accept: "application/json", ...(prevEtag ? { "If-None-Match": prevEtag } : {}) },
+        headers: { 
+          Accept: "application/json", 
+          ...(prevEtag ? { "If-None-Match": prevEtag } : {}) 
+        },
         signal,
       });
 
+      // ===== 304 Not Modified - sin cambios =====
       if (res.status === 304) {
         const cached = getCachedConvs();
-        if (cached) {
+        if (cached?.ok && Array.isArray(cached.items)) {
           const items: ConversationRow[] = cached.items
             .map((x: any): ConversationRow => ({
               id: x.id,
@@ -152,9 +157,11 @@ export default function GlobalChatFab() {
             const current = items.find((i) => i.id === activeId);
             setActiveTitle(formatTitle(current || undefined));
           }
+          setErrorList(null);
           return;
         }
-        // si no hay cache, forzamos un refetch sin ETag:
+        // Si no hay cache válido, forzar refetch completo
+        sessionStorage.removeItem(ETAG_KEY);
         return await fetchList(signal);
       }
 
@@ -165,6 +172,7 @@ export default function GlobalChatFab() {
 
       const json = await safeJson(res);
       const etag = res.headers.get("ETag");
+
       if (json?.ok === true && Array.isArray(json.items)) {
         setCachedConvs(json, etag);
         const items: ConversationRow[] = json.items
@@ -189,6 +197,7 @@ export default function GlobalChatFab() {
           const current = items.find((i) => i.id === activeId);
           setActiveTitle(formatTitle(current || undefined));
         }
+        setErrorList(null);
       } else {
         throw new Error("Formato inesperado de la respuesta");
       }
@@ -202,46 +211,47 @@ export default function GlobalChatFab() {
 
   useEffect(() => setMounted(true), []);
 
-  // Polling con control de visibilidad y sin solapar requests
+  // ===== Polling optimizado con visibilidad =====
   useEffect(() => {
     let mounted = true;
     let intervalId: ReturnType<typeof setInterval> | null = null;
-    let openIntervalId: ReturnType<typeof setInterval> | null = null;
-    let controller: AbortController | null = null;
 
     const tick = async () => {
       if (!mounted) return;
-      if (controller) controller.abort(); // cancelamos la anterior si seguía en vuelo
-      controller = new AbortController();
+      
+      // Cancelar request anterior si sigue en vuelo
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      
+      abortControllerRef.current = new AbortController();
       setLoading(true);
-      await fetchList(controller.signal);
+      await fetchList(abortControllerRef.current.signal);
     };
 
-    // primer fetch inmediato
+    // Primer fetch inmediato
     tick();
 
-    const computeBaseMs = () => {
+    // Intervalo adaptativo
+    const computeInterval = () => {
       if (document.visibilityState === "hidden") return 60000; // 60s en background
-      if (open) return 20000;                                  // 20s si el panel está abierto
-      return 30000;                                            // 30s si está cerrado
+      if (open) return 15000; // 15s si el panel está abierto
+      return 30000; // 30s si está cerrado
     };
 
-    const setupIntervals = () => {
+    const setupInterval = () => {
       if (intervalId) clearInterval(intervalId);
-      if (openIntervalId) clearInterval(openIntervalId);
-
-      const base = computeBaseMs();
-      intervalId = setInterval(tick, base);
-      if (open && document.visibilityState === "visible") {
-        openIntervalId = setInterval(tick, 20000);
-      }
+      intervalId = setInterval(tick, computeInterval());
     };
 
-    setupIntervals();
+    setupInterval();
 
+    // Listener de visibilidad
     const onVisibility = () => {
-      setupIntervals();
-      if (document.visibilityState === "visible") tick();
+      setupInterval();
+      if (document.visibilityState === "visible") {
+        tick(); // Refetch inmediato al volver visible
+      }
     };
     document.addEventListener("visibilitychange", onVisibility);
 
@@ -249,8 +259,7 @@ export default function GlobalChatFab() {
       mounted = false;
       document.removeEventListener("visibilitychange", onVisibility);
       if (intervalId) clearInterval(intervalId);
-      if (openIntervalId) clearInterval(openIntervalId);
-      if (controller) controller.abort();
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, [open, activeId]);
 
@@ -259,6 +268,7 @@ export default function GlobalChatFab() {
     [convs]
   );
 
+  // ===== Efecto de "nuevo mensaje" =====
   useEffect(() => {
     if (!open && totalUnread > lastUnreadRef.current) {
       setJustNew(true);
@@ -274,6 +284,7 @@ export default function GlobalChatFab() {
     };
   }, []);
 
+  // ===== Listener de evento custom para abrir chat =====
   useEffect(() => {
     function handleOpenChat(e: Event) {
       const { conversationId, producto_desc, codigo_interno } =
@@ -383,13 +394,13 @@ export default function GlobalChatFab() {
             <div className="h-[560px] max-h-[70vh] flex flex-col bg-gray-50">
               {!activeId ? (
                 <div className="flex-1 overflow-y-auto">
-                  {loading && (
+                  {loading && convs.length === 0 && (
                     <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3 px-6">
                       <Loader2 className="w-8 h-8 animate-spin" style={{ color: AZUL }} />
                       <p className="text-sm">Cargando conversaciones...</p>
                     </div>
                   )}
-                  {errorList && !loading && (
+                  {errorList && !loading && convs.length === 0 && (
                     <div className="m-4 p-4 rounded-xl bg-red-50 border border-red-100">
                       <p className="text-sm text-red-700 font-medium">Error</p>
                       <p className="text-sm text-red-600 mt-1">{errorList}</p>
