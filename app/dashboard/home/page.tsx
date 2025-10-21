@@ -1,11 +1,9 @@
-// app/dashboard/home/page.tsx
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import Link from "next/link";
 import { Suspense } from "react";
 import { unstable_cache } from "next/cache";
-import { ProductStatsTable, TopSearchedProductsTable } from "@/components/ProductsHomeTable";
 
 /* ===== Config RSC ===== */
 export const runtime = "nodejs";
@@ -320,7 +318,7 @@ export default async function DashboardHomePage() {
                   <p>
                     Aceptación:{" "}
                     <span className={
-                      (respuestaRating, // no usado, pero mantiene consistencia visual
+                      (respuestaRating,
                       aceptacionRating === "Bueno" ? "text-green-600 font-bold" :
                       aceptacionRating === "Regular" ? "text-yellow-600 font-bold" : "text-rose-600 font-bold")
                     }>
@@ -349,16 +347,6 @@ export default async function DashboardHomePage() {
               bgColor="from-orange-50 to-amber-50"
             />
           </div>
-        </section>
-
-        {/* === NUEVA SECCIÓN: Productos (vertical, uno debajo del otro) === */}
-        <section className="space-y-6">
-          <Suspense fallback={<ModernSkeleton title="Comparativa de Precios" />}>
-            <ProductStatsTable proveedorId={proveedorId} />
-          </Suspense>
-          <Suspense fallback={<ModernSkeleton title="Productos más buscados" />}>
-            <TopSearchedProductsTable />
-          </Suspense>
         </section>
 
         {/* Async Sections */}
@@ -547,7 +535,7 @@ function RadarChartSVG({ labels, values }: { labels: string[]; values: number[] 
           return <text key={i} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize="10" fontWeight="600" fill="#1f2937">{lbl}</text>;
         })}
         <defs>
-          <linearGradient id="radarGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id="radarGradient" x1="0%" y1="0%" x2="100%">
             <stop offset="0%" stopColor="#00152F" stopOpacity="0.4"/>
             <stop offset="100%" stopColor="#FFBD00" stopOpacity="0.15"/>
           </linearGradient>

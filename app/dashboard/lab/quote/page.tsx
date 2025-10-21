@@ -289,7 +289,7 @@ export default async function LabQuotePage({
   const sent = sp.sent === "1";
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 md:px-8">
+    <div className="mx-auto w-full max-w-5xl px-4 bg-white pb-16 pt-6 md:px-8">
       <div
         className="rounded-2xl p-6 shadow-sm"
         style={{ backgroundColor: GRIS, border: `1px solid ${AZUL}1A` }}

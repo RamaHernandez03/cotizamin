@@ -1,34 +1,61 @@
+// app/api/recommendations/refresh/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { revalidateTag, revalidatePath } from "next/cache";
 
+// 👇 helper: deducir prioridad por emoji/palabra
+function inferPrioridad(m: string | undefined) {
+  const s = (m || "").toLowerCase();
+  if (s.includes("🔴") || s.includes("critico") || s.includes("crítico")) return "alta";
+  if (s.includes("🟡") || s.includes("atención") || s.includes("ajustar")) return "media";
+  return "baja"; // 🟢 u OK
+}
+
+// 👇 helper: deducir tipo rápido (puedes sofisticarlo luego)
+function inferTipo(m: string | undefined) {
+  const s = (m || "").toLowerCase();
+  if (s.includes("precio")) return "Precio";
+  if (s.includes("stock")) return "Stock";
+  if (s.includes("competencia") || s.includes("comparable")) return "Mercado";
+  return "General";
+}
+
+// 👇 tu normalizador, extendido para el payload de ejemplo
 function normalizeN8N(raw: any) {
   let payload: any = raw?.response?.response ?? raw?.response ?? raw;
   if (typeof payload === "string") {
-    try {
-      payload = JSON.parse(payload);
-    } catch {
-      payload = { recomendaciones: [], resumen: {} };
-    }
+    try { payload = JSON.parse(payload); } catch { payload = {}; }
   }
   const recos = Array.isArray(payload.recomendaciones) ? payload.recomendaciones : [];
+
+  // mapeo al esquema que guardamos
+  const recomendaciones = recos.map((r: any) => {
+    const mensaje = r.comentario_ia ?? r.mensaje ?? "";
+    const producto = r.producto
+      ? `${r.producto}${r.marca ? ` · ${r.marca}` : ""}`
+      : (r.producto ?? null);
+    return {
+      tipo: r.tipo ?? inferTipo(mensaje),
+      mensaje,
+      producto,
+      prioridad: r.prioridad ?? inferPrioridad(mensaje),
+    };
+  });
+
   return {
-    ok: payload.ok ?? true,
+    ok: true,
     cliente_id: payload.cliente_id ?? null,
     fecha_analisis: payload.fecha_analisis ? new Date(payload.fecha_analisis) : null,
-    total: recos.length,
+    total: recomendaciones.length,
     resumen: payload.resumen ?? {},
-    recomendaciones: recos,
+    recomendaciones,
   };
 }
 
 export async function POST(req: NextRequest) {
   const { cliente_id } = await req.json();
   if (!cliente_id) {
-    return NextResponse.json(
-      { ok: false, error: "cliente_id required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, error: "cliente_id required" }, { status: 400 });
   }
 
   const base = process.env.N8N_BASE_URL!;
@@ -39,18 +66,16 @@ export async function POST(req: NextRequest) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cliente_id }),
     cache: "no-store",
+    signal: AbortSignal.timeout(60000),
   });
 
   if (!n8nRes.ok) {
-    return NextResponse.json(
-      { ok: false, error: `n8n ${n8nRes.status}` },
-      { status: 502 }
-    );
+    return NextResponse.json({ ok: false, error: `n8n ${n8nRes.status}` }, { status: 502 });
   }
 
   const normalized = normalizeN8N(await n8nRes.json());
 
-  // Persistir batch + items (transacción)
+  // 💾 Persistir en transacción
   const created = await prisma.$transaction(async (tx) => {
     const batch = await tx.recommendationBatch.create({
       data: {
@@ -67,7 +92,7 @@ export async function POST(req: NextRequest) {
           batchId: batch.id,
           tipo: r.tipo,
           mensaje: r.mensaje,
-          producto: r.producto ?? null,
+          producto: r.producto,
           prioridad: r.prioridad,
         })),
       });
@@ -76,9 +101,8 @@ export async function POST(req: NextRequest) {
     return batch;
   });
 
-  // ✅ Invalida el cache del Home para este cliente
+  // 🔄 Invalidaciones
   revalidateTag(`proveedor:${cliente_id}:home`);
-  // (opcional) refresca el path del home
   revalidatePath("/dashboard/home");
 
   return NextResponse.json({ ok: true, refreshedBatchId: created.id });

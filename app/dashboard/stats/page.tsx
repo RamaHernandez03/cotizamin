@@ -303,7 +303,7 @@ export default async function StatsPage() {
   const comparativas = buildComparativaMetricas(estadisticas, promedioMercadoExito);
 
   return (
-    <div className="min-h-screen p-4 md:p-6">
+    <div className="min-h-screen bg-white p-4 md:p-6">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
         <div className="mb-8">

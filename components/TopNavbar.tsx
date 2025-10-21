@@ -24,13 +24,13 @@ export default function TopNavbar() {
 
   return (
     <>
-      {/* NAVBAR: fijo SOLO en mobile, estático en desktop */}
+      {/* NAVBAR: fijo SOLO en mobile, estático en tablet+desktop */}
       <header className="fixed md:static top-0 left-0 w-full z-50 md:z-auto bg-[#0A1B2E] text-white shadow-lg border-b border-gray-800">
         <div className="mx-auto flex h-16 md:h-24 max-w-7xl items-center justify-between px-4 sm:px-6 md:px-8 lg:px-16">
           <div className="flex items-center gap-4 md:gap-12">
-            {/* Botón hamburguesa SOLO en mobile */}
+            {/* Botón hamburguesa en mobile+tablet */}
             <button
-              className="md:hidden inline-flex items-center justify-center p-2 rounded-md border border-white/10 hover:bg-white/10 focus:outline-none"
+              className="lg:hidden inline-flex items-center justify-center p-2 rounded-md border border-white/10 hover:bg-white/10 focus:outline-none"
               aria-label="Abrir menú"
               aria-expanded={open}
               onClick={() => setOpen(true)}
@@ -40,14 +40,15 @@ export default function TopNavbar() {
               </svg>
             </button>
 
-            <Link href="/dashboard/home" className="text-xl md:text-2xl font-bold">
+            <Link href="/dashboard/home" className="text-xl md:text-3xl font-bold">
               <span className="text-white">Cotiza</span>
               <span className="text-[#FFBD00]">Min</span>
             </Link>
 
-            {/* Links solo desktop */}
-            <nav className="hidden md:flex gap-6 lg:gap-8 text-sm md:text-base font-medium">
+            {/* Links solo desktop (lg+) */}
+            <nav className="hidden lg:flex gap-6 xl:gap-8 text-sm lg:text-base font-medium">
               <Link href="/dashboard/home" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">HOME</Link>
+              <Link href="/dashboard/inventory" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">INVENTARIO</Link>
               <Link href="/dashboard/support" className="hover:text-[#FFBD00] transition-colors duration-200 py-2">CONTÁCTANOS</Link>
             </nav>
           </div>
@@ -61,7 +62,8 @@ export default function TopNavbar() {
                     {nombre}
                   </span>
                 </div>
-                <div className="hidden md:block">
+                {/* Mostrar botón en desktop (lg+) */}
+                <div className="hidden lg:block">
                   <SignOutButton />
                 </div>
               </>
@@ -70,12 +72,12 @@ export default function TopNavbar() {
         </div>
       </header>
 
-      {/* Spacer para que el contenido no quede tapado: SOLO en mobile */}
+      {/* Spacer solo en mobile (porque el header es fixed solo ahí) */}
       <div className="h-16 md:hidden" />
 
-      {/* Drawer mobile */}
+      {/* Drawer mobile+tablet */}
       {open && (
-        <div className="fixed inset-0 z-[60] md:hidden" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-[60] lg:hidden" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
           <aside className="absolute left-0 top-0 h-full w-80 max-w-[85vw] bg-white text-gray-900 shadow-2xl p-4 overflow-y-auto flex flex-col">
             <div className="flex items-center justify-between mb-2">

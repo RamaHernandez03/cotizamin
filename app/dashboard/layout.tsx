@@ -56,7 +56,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const year = new Date().getFullYear();
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className="min-h-screen flex flex-col bg-gray-100">
       <TopNavbar />
       
       {/* 
@@ -102,9 +102,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         </aside>
 
         {/* Main */}
-        <main className="flex-1 min-w-0 overflow-x-auto">
-          {children}
-        </main>
+<main className="flex-1 rounded-2xl min-w-0 overflow-x-auto">
+  {children}
+</main>
       </div>
 
       {/* Footer */}

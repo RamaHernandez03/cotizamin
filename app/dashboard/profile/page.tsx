@@ -83,7 +83,7 @@ export default function ProfileCard() {
   const isEmpresa = /SRL|S\.A\.|SA|SAS|LLC|INC/i.test(cliente.nombre || '');
 
   return (
-    <div className="min-h-screen  p-4 lg:p-8">
+    <div className="min-h-screen bg-white p-4 lg:p-8">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="mb-8 text-center lg:text-left">

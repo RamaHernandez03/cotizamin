@@ -105,7 +105,7 @@ export default function EditProfilePage() {
   }
 
   return (
-    <div className="min-h-screen p-4 lg:p-8">
+    <div className="min-h-screen bg-white p-4 lg:p-8">
       <div className="max-w-3xl mx-auto">
         {/* Breadcrumb / Back */}
         <div className="mb-4">

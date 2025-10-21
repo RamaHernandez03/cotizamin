@@ -234,7 +234,7 @@ function InventoryView({ take }: { take: number }) {
   };
 
   return (
-    <div className="p-4 sm:p-6" style={{ minHeight: "100vh" }}>
+    <div className="p-4 bg-white sm:p-6" style={{ minHeight: "100vh" }}>
       <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6" style={{ color: "#00152F" }}>
         Inventario
       </h1>
