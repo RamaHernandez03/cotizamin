@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { User, Mail, Phone, FileText, Edit3, Loader2, AlertCircle } from 'lucide-react';
 
+
 type Cliente = {
   nombre: string;
   ruc: string;
