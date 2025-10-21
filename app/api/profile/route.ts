@@ -5,14 +5,18 @@ import prisma from "@/lib/prisma";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
+  if (!session?.user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
 
-  const clienteId = (session.user as any).id as string;
   const cliente = await prisma.cliente.findUnique({
-    where: { id_cliente: clienteId },
+    where: { id_cliente: (session.user as any).id },
+    select: {
+      nombre: true, ruc: true, email: true, telefono: true,
+      avatar_url: true,
+    },
   });
 
-  return NextResponse.json(cliente ?? null);
+  return NextResponse.json(cliente ? {
+    ...cliente,
+    avatarUrl: cliente.avatar_url, // alias para el front
+  } : null);
 }

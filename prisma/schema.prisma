@@ -20,6 +20,7 @@ model Cliente {
   email_contacto   String?
   pais             String?
   telefono         String?
+  avatar_url       String?
   ruc_locked       Boolean                   @default(false)
   email_verificado DateTime?
   chatParticipants ConversationParticipant[]

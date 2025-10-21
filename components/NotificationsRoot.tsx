@@ -1,6 +1,7 @@
+// components/NotificationsRoot.tsx
 "use client";
 import { useSession } from "next-auth/react";
-import NotificationsWatcher from "@/components/NotificationsWatcher";
+import NotificationWatcher from "@/components/NotificationWatcher";
 
 export default function NotificationsRoot() {
   const { data } = useSession();
@@ -10,5 +11,5 @@ export default function NotificationsRoot() {
   if (!clienteId) return null;
 
   // initialBatchId lo podés omitir globalmente; el watcher abrirá cuando refresque/cambie
-  return <NotificationsWatcher clienteId={String(clienteId)} pollMs={60000} initialBatchId={null} />;
+  return <NotificationWatcher clienteId={String(clienteId)} pollMs={60000} initialBatchId={null} />;
 }

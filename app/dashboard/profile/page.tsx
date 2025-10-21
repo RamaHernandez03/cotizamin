@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { User, Mail, Phone, FileText, Edit3, Loader2, AlertCircle } from 'lucide-react';
 
@@ -12,10 +12,23 @@ type Cliente = {
   avatarUrl?: string | null;
 };
 
+async function safeJson(res: Response) {
+  const text = await res.text();
+  if (!text) return { data: null };
+  try {
+    return { data: JSON.parse(text) };
+  } catch {
+    return { data: null, raw: text };
+  }
+}
+
 export default function ProfileCard() {
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     async function fetchProfile() {
@@ -23,10 +36,10 @@ export default function ProfileCard() {
         setErrorMsg(null);
         setLoading(true);
         const res = await fetch('/api/profile', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as Cliente;
-        setCliente(data);
-      } catch (err: any) {
+        const { data } = await safeJson(res);
+        if (!res.ok) throw new Error((data as any)?.error || `HTTP ${res.status}`);
+        setCliente(data as Cliente);
+      } catch {
         setErrorMsg('No se pudo cargar el perfil. Intenta nuevamente.');
       } finally {
         setLoading(false);
@@ -34,6 +47,65 @@ export default function ProfileCard() {
     }
     fetchProfile();
   }, []);
+
+  // Limpia el preview para no filtrar memoria
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  function pickFile() {
+    fileInputRef.current?.click();
+  }
+
+  async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('El archivo debe ser una imagen.');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('La imagen no puede superar 5MB.');
+      e.target.value = '';
+      return;
+    }
+
+    // Preview optimista
+    const nextPreview = URL.createObjectURL(file);
+    setPreviewUrl((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return nextPreview;
+    });
+
+    const fd = new FormData();
+    fd.append('file', file);
+
+    try {
+      setUploading(true);
+      const res = await fetch('/api/profile/avatar', { method: 'POST', body: fd });
+      const { data, raw } = await safeJson(res);
+      if (!res.ok) {
+        const msg = (data as any)?.error || raw || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      // Actualiza estado sin recargar
+      setCliente((prev) => (prev ? { ...prev, avatarUrl: (data as any)?.url } : prev));
+    } catch (err: any) {
+      alert(err?.message || 'No se pudo subir la imagen.');
+      // revertir preview si falló
+      setPreviewUrl((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return null;
+      });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   if (loading) {
     return (
@@ -81,6 +153,7 @@ export default function ProfileCard() {
   })();
 
   const isEmpresa = /SRL|S\.A\.|SA|SAS|LLC|INC/i.test(cliente.nombre || '');
+  const avatarSrc = previewUrl || cliente.avatarUrl || '/images/avatar-default.png';
 
   return (
     <div className="min-h-screen bg-white p-4 lg:p-8">
@@ -101,23 +174,53 @@ export default function ProfileCard() {
           {/* Header Card */}
           <div className="bg-gradient-to-r from-[#00152F] to-[#001d3d] p-6 lg:p-8">
             <div className="flex flex-col sm:flex-row items-center gap-6">
-              <div className="relative">
-                <div className="w-20 h-20 lg:w-24 lg:h-24 rounded-full overflow-hidden shadow-lg ring-2 ring-white/30">
-                  {cliente.avatarUrl ? (
-                    <Image
-                      src={cliente.avatarUrl}
-                      alt="Avatar"
-                      width={96}
-                      height={96}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-br from-[#FFBD00] to-amber-400 flex items-center justify-center">
-                      <User className="w-10 h-10 lg:w-12 lg:h-12 text-[#00152F]" />
-                    </div>
-                  )}
+              {/* Avatar + icono editar + anillo animado */}
+              <div className="relative group">
+                {/* Anillo animado (aparece al hover o subiendo) */}
+                <div
+                  className={`
+                    pointer-events-none absolute -inset-1 rounded-full border-2 border-amber-400/80 border-dashed
+                    transition-opacity ${uploading ? 'opacity-100 animate-spin' : 'opacity-0 group-hover:opacity-100'}
+                  `}
+                  style={{ animationDuration: '6s' }}
+                />
+                {/* Imagen */}
+                <div className="relative w-20 h-20 lg:w-24 lg:h-24 rounded-full overflow-hidden shadow-xl ring-2 ring-white/30">
+                  <Image
+                    src={avatarSrc}
+                    alt="Avatar"
+                    width={96}
+                    height={96}
+                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                    priority
+                  />
+                  {/* overlay sutil */}
+                  <div className="pointer-events-none absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/10 transition-colors" />
                 </div>
-                <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-green-500 rounded-full border-2 border-white" />
+
+                {/* Botón flotante (lápiz) */}
+                <button
+                  type="button"
+                  onClick={pickFile}
+                  title="Editar foto de perfil"
+                  aria-label="Editar foto de perfil"
+                  className="
+                    absolute -bottom-1 -right-1 h-8 w-8 grid place-items-center
+                    rounded-full bg-white text-[#00152F] shadow-lg
+                    ring-1 ring-black/5 hover:shadow-xl transition
+                  "
+                >
+                  {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit3 className="w-4 h-4" />}
+                </button>
+
+                {/* input oculto */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={onFileChange}
+                />
               </div>
 
               <div className="text-center sm:text-left flex-1">
@@ -164,32 +267,6 @@ export default function ProfileCard() {
           </div>
         </div>
 
-        {/* (Opcional) Mini cards, si querés mantener el “estado / docs / plan” */}
-        {/* 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6 mt-8">
-          <div className="bg-white rounded-2xl shadow-md p-6 text-center border border-slate-200/60">
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <div className="w-6 h-6 bg-green-500 rounded-full"></div>
-            </div>
-            <h3 className="text-lg font-bold text-[#00152F] mb-1">Activo</h3>
-            <p className="text-sm text-slate-500">Estado de cuenta</p>
-          </div>
-          <div className="bg-white rounded-2xl shadow-md p-6 text-center border border-slate-200/60">
-            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <FileText className="w-6 h-6 text-blue-600" />
-            </div>
-            <h3 className="text-lg font-bold text-[#00152F] mb-1">12</h3>
-            <p className="text-sm text-slate-500">Documentos</p>
-          </div>
-          <div className="bg-white rounded-2xl shadow-md p-6 text-center border border-slate-200/60">
-            <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <div className="w-6 h-6 bg-[#FFBD00] rounded-full"></div>
-            </div>
-            <h3 className="text-lg font-bold text-[#00152F] mb-1">Premium</h3>
-            <p className="text-sm text-slate-500">Membresía</p>
-          </div>
-        </div>
-        */}
       </div>
     </div>
   );

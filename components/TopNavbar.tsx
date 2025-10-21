@@ -2,6 +2,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import SignOutButton from "./TopNavbarSignOutButton";
@@ -10,6 +11,10 @@ import DashboardMenu from "./DashboardMenu";
 export default function TopNavbar() {
   const { data: session } = useSession();
   const nombre = (session?.user as any)?.nombre ?? "";
+  const avatarUrl =
+    (session?.user as any)?.avatarUrl ||
+    (session?.user as any)?.avatar_url || // por si viene con snake_case desde el server
+    "/images/avatar-default.png";
 
   const [open, setOpen] = useState(false);
 
@@ -53,16 +58,35 @@ export default function TopNavbar() {
             </nav>
           </div>
 
+          {/* Bienvenida con avatar — visible desde sm: en adelante (como pediste “en la resolución que corresponde”) */}
           <div className="flex items-center gap-3 md:gap-6 max-w-[60%] md:max-w-none">
             {nombre && (
               <>
-                <div className="hidden sm:flex items-center gap-2 md:gap-3">
-                  <span className="text-gray-400 font-medium text-xs md:text-sm">BIENVENIDO</span>
-                  <span className="text-[#FFBD00] font-semibold uppercase truncate max-w-[120px] sm:max-w-[180px]">
-                    {nombre}
-                  </span>
+                <div className="hidden sm:flex items-center gap-3 md:gap-4">
+                  {/* AVATAR */}
+                  <div className="relative h-8 w-8 md:h-12 md:w-12 rounded-full overflow-hidden ring-2 ring-white/15 bg-[#0F2744]">
+                    <Image
+                      src={avatarUrl}
+                      alt="Avatar empresa"
+                      fill
+                      sizes="48px"
+                      className="object-cover"
+                      priority
+                    />
+                  </div>
+
+                  {/* BLOQUE TEXTO: BIENVENIDO (arriba) + NOMBRE (abajo) */}
+                  <div className="leading-tight">
+                    <div className="text-[10px] md:text-xs tracking-[0.14em] text-gray-300 uppercase">
+                      Bienvenido
+                    </div>
+                    <div className="text-sm md:text-base font-extrabold uppercase text-white truncate max-w-[160px] md:max-w-[240px]">
+                      {nombre}
+                    </div>
+                  </div>
                 </div>
-                {/* Mostrar botón en desktop (lg+) */}
+
+                {/* Botón salir solo desktop (lg+) */}
                 <div className="hidden lg:block">
                   <SignOutButton />
                 </div>
