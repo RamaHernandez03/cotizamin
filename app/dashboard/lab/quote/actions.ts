@@ -516,14 +516,14 @@ export async function awardAndOpenChat(formData: FormData) {
             ${Number.isFinite(precio) ? `<li><strong>Precio de referencia:</strong> $${precio.toLocaleString("es-AR")}</li>` : ""}
           </ul>
           <p>Podés coordinar la entrega y condiciones desde el chat:</p>
-          <p style="margin-top:16px">${btn(chatUrl, "Abrir chat")}</p>
+          <p style="margin-top:16px">${btn(baseUrl, "Abrir chat")}</p>
         `
       );
       await sendMail({
         to: ganador.email,
         subject: asunto,
         html,
-        text: `Ganaste la licitación ${descripcion || q} ${marca ? `(${marca})` : ""}. Abrí el chat: ${chatUrl}`,
+        text: `Ganaste la licitación ${descripcion || q} ${marca ? `(${marca})` : ""}. Abrí el chat: ${baseUrl}`,
       });
     }
   } catch (e) {
