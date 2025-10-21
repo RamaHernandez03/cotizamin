@@ -6,6 +6,9 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
+// mails
+import { sendMail, wrap, btn, getBaseUrl } from "@/lib/mail";
+
 /** =========================
  * Helpers compartidos
  * ========================= */
@@ -75,15 +78,6 @@ function normalizeN8nDataToBlocks(raw: any, q: string) {
   return [];
 }
 
-function getBaseUrl() {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.APP_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
-    "http://localhost:3000"
-  );
-}
-
 function sanitize(v: unknown) {
   return String(v ?? "").trim();
 }
@@ -138,6 +132,7 @@ async function triggerWebhookForProvider(params: {
  * - Crea/actualiza registros en `cotizacionParticipacion`
  * - Dispara n8n y el ingest MERGEA usando participation_id
  * - Empuja a RecentSuggestion con FIFO cap 10
+ * - Envía emails de participación a cada proveedor listado
  */
 export async function notifyFromQuery(formData: FormData) {
   const q = sanitize(formData.get("q"));
@@ -273,7 +268,59 @@ export async function notifyFromQuery(formData: FormData) {
     }
   });
 
-  // 5) Disparo n8n (con participation_id) y empujo a Sugerencias (FIFO) en paralelo
+  // 5) Enviar emails de participación (no bloqueantes)
+  try {
+    const providerIds = topList.map((t) => t.proveedor_id);
+    const contactos = await prisma.cliente.findMany({
+      where: { id_cliente: { in: providerIds } },
+      select: { id_cliente: true, email: true, nombre: true },
+    });
+    const emailMap = new Map(contactos.map((c) => [c.id_cliente, c]));
+
+    const baseUrl = getBaseUrl();
+    const detalle = [
+      q,
+      (marca && `Marca ${marca}`) || null,
+      (modelo && `Modelo ${modelo}`) || null,
+      (material && `Material ${material}`) || null,
+    ].filter(Boolean).join(" · ");
+
+    await Promise.allSettled(topList.map(async (t) => {
+      const c = emailMap.get(t.proveedor_id);
+      if (!c?.email) return;
+
+      const html = wrap(
+        "Estás participando en una licitación",
+        `
+          <p>Hola${c.nombre ? ` ${c.nombre}` : ""},</p>
+          <p>Estás participando en la licitación <strong>${proyectoName}</strong>.</p>
+          <ul>
+            <li><strong>Producto:</strong> ${t.descripcion || q}</li>
+            ${t.marca ? `<li><strong>Marca:</strong> ${t.marca}</li>` : ""}
+            ${t.modelo ? `<li><strong>Modelo:</strong> ${t.modelo}</li>` : ""}
+            ${t.material ? `<li><strong>Material:</strong> ${t.material}</li>` : ""}
+            <li><strong>Ranking actual:</strong> ${t.rank} / ${t.total}</li>
+            ${Number.isFinite(t.precio_actual) ? `<li><strong>Precio de referencia:</strong> $${t.precio_actual.toLocaleString("es-AR")}</li>` : ""}
+          </ul>
+          <p>Te avisaremos cuando se adjudique la licitación.</p>
+          <p style="margin-top:16px">${btn(`${baseUrl}/dashboard/feedback`, "Ver feedback")}</p>
+          <hr style="margin:16px 0;border:none;border-top:1px solid #eee" />
+          <p style="font-size:12px;color:#667085">Búsqueda: ${detalle}</p>
+        `
+      );
+
+      await sendMail({
+        to: c.email,
+        subject: `Participación creada — ${proyectoName}`,
+        html,
+        text: `Estás participando en ${proyectoName}. Producto: ${t.descripcion || q}. Ranking ${t.rank}/${t.total}.`,
+      });
+    }));
+  } catch (e) {
+    console.warn("[notifyFromQuery mail] error:", e);
+  }
+
+  // 6) Disparo n8n (con participation_id) y empujo a Sugerencias (FIFO) en paralelo
   await Promise.allSettled([
     ...participationRefs.map((ref) =>
       triggerWebhookForProvider({
@@ -300,7 +347,7 @@ export async function notifyFromQuery(formData: FormData) {
     }),
   ]);
 
-  // 6) refrescamos feedback y volvemos a la misma pantalla con flag "sent"
+  // 7) refrescamos feedback y volvemos a la misma pantalla con flag "sent"
   revalidatePath("/dashboard/feedback");
   redirect(
     `/dashboard/lab/quote?sent=1&q=${encodeURIComponent(q)}&marca=${encodeURIComponent(
@@ -311,6 +358,8 @@ export async function notifyFromQuery(formData: FormData) {
 
 /**
  * Acción POR FILA: adjudicar al ganador e iniciar el chat 1–a–1
+ * - Envía mail al ganador (con link al chat si existe)
+ * - Envía mails a no ganadores con ranking y comentario IA (si está disponible)
  */
 export async function awardAndOpenChat(formData: FormData) {
   const session = await getServerSession(authOptions);
@@ -325,6 +374,7 @@ export async function awardAndOpenChat(formData: FormData) {
   const codigo = String(formData.get("codigo_interno") || "");
   const descripcion = String(formData.get("descripcion") || "");
   const precio = Number(formData.get("precio_actual") || 0);
+  const marca = String(formData.get("marca") || ""); // 👈 NUEVO
 
   if (!proveedor_id || !q) throw new Error("Bad request");
 
@@ -440,6 +490,114 @@ export async function awardAndOpenChat(formData: FormData) {
     conversationId = result.conversationId;
   } catch (e) {
     console.warn("[awardAndOpenChat] Chat deshabilitado (faltan tablas). Sigo sin chat.", e);
+  }
+
+  // === MAILS ===
+  // 1) Mail al ganador
+  try {
+    const ganador = await prisma.cliente.findUnique({
+      where: { id_cliente: proveedor_id },
+      select: { email: true, nombre: true },
+    });
+    const baseUrl = getBaseUrl();
+    const chatUrl = conversationId
+      ? `${baseUrl}/dashboard/messages/${conversationId}`
+      : `${baseUrl}/dashboard/messages`;
+
+    if (ganador?.email) {
+      const asunto = `¡Felicidades! Ganaste la licitación — ${descripcion || q}${marca ? ` (${marca})` : ""}`;
+      const html = wrap(
+        "¡Felicidades, ganaste la licitación! 🎉",
+        `
+          <p>Hola${ganador.nombre ? ` ${ganador.nombre}` : ""},</p>
+          <p>Tu oferta fue seleccionada para <strong>${descripcion || q}</strong>${marca ? ` — <strong>${marca}</strong>` : ""}.</p>
+          <ul>
+            <li><strong>Código:</strong> ${codigo || "N/D"}</li>
+            ${Number.isFinite(precio) ? `<li><strong>Precio de referencia:</strong> $${precio.toLocaleString("es-AR")}</li>` : ""}
+          </ul>
+          <p>Podés coordinar la entrega y condiciones desde el chat:</p>
+          <p style="margin-top:16px">${btn(chatUrl, "Abrir chat")}</p>
+        `
+      );
+      await sendMail({
+        to: ganador.email,
+        subject: asunto,
+        html,
+        text: `Ganaste la licitación ${descripcion || q} ${marca ? `(${marca})` : ""}. Abrí el chat: ${chatUrl}`,
+      });
+    }
+  } catch (e) {
+    console.warn("[mail ganador] error:", e);
+  }
+
+  // 2) Mails a participantes no ganadores (tomando último comentario IA si ya llegó)
+  try {
+    const proyectoCotizacion = `Cotización: ${q}`;
+    const recienteDesde = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 3);
+    const participaciones = await prisma.cotizacionParticipacion.findMany({
+      where: {
+        proyecto: proyectoCotizacion,
+        fecha: { gte: recienteDesde },
+      },
+      orderBy: { fecha: "desc" },
+      select: {
+        proveedor_id: true,
+        comentario: true,     // aquí puede venir "IA: ..."
+        rank_pos: true,
+        rank_total: true,
+      },
+    });
+
+    const seen = new Set<string>();
+    const ultimas = participaciones.filter((p) => {
+      if (seen.has(p.proveedor_id)) return false;
+      seen.add(p.proveedor_id);
+      return true;
+    });
+
+    const perdedores = ultimas.filter((p) => p.proveedor_id !== proveedor_id);
+    const idsPerdedores = perdedores.map((p) => p.proveedor_id);
+
+    if (idsPerdedores.length) {
+      const contactos = await prisma.cliente.findMany({
+        where: { id_cliente: { in: idsPerdedores } },
+        select: { id_cliente: true, email: true, nombre: true },
+      });
+      const cmap = new Map(contactos.map((c) => [c.id_cliente, c]));
+      const baseUrl = getBaseUrl();
+
+      await Promise.allSettled(perdedores.map(async (p) => {
+        const c = cmap.get(p.proveedor_id);
+        if (!c?.email) return;
+
+        const rankTxt = p.rank_pos != null && p.rank_total != null ? `${p.rank_pos}/${p.rank_total}` : "—";
+        const iaLine = (p.comentario || "").split("\n").find((line) => line.trim().startsWith("IA:")) || "";
+        const iaText = iaLine.replace(/^IA:\s*/i, "").trim();
+
+        const html = wrap(
+          "Resultado de la licitación",
+          `
+            <p>Hola${c.nombre ? ` ${c.nombre}` : ""},</p>
+            <p>La licitación <strong>${proyectoCotizacion}</strong> fue adjudicada a otro proveedor.</p>
+            <ul>
+              <li><strong>Tu ranking:</strong> ${rankTxt}</li>
+              ${iaText ? `<li><strong>Comentario IA:</strong> ${iaText}</li>` : ""}
+            </ul>
+            <p>Revisá tus participaciones para optimizar precio/stock y mejorar tu posición en futuras búsquedas.</p>
+            <p style="margin-top:16px">${btn(`${baseUrl}/dashboard/feedback`, "Ver mis participaciones")}</p>
+          `
+        );
+
+        await sendMail({
+          to: c.email,
+          subject: `Resultado — ${proyectoCotizacion}`,
+          html,
+          text: `Resultado ${proyectoCotizacion}. Tu ranking: ${rankTxt}. ${iaText ? `IA: ${iaText}` : ""}`,
+        });
+      }));
+    }
+  } catch (e) {
+    console.warn("[mail perdedores] error:", e);
   }
 
   // 3) Empujar a Sugerencias (FIFO)

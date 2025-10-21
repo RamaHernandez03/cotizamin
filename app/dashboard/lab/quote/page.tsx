@@ -142,6 +142,7 @@ export default async function LabQuotePage({
         modelo: string | null;
         material: string | null;
         precio_actual: number;
+        total?: number;
       }>
     | null = null;
 
@@ -192,7 +193,6 @@ export default async function LabQuotePage({
       rank: i + 1,
       total: totalProveedores,
     }));
-    
 
     // ====== NUEVO: cantidad real de proveedores que cumplen filtros ======
     providerCountForKey = uniques.length;
@@ -217,21 +217,24 @@ export default async function LabQuotePage({
       );
     } catch {}
 
-    results = top.map((t, i) => ({
-      rank: i + 1,
-      proveedor_id: t.proveedor_id,
-      proveedor_nombre: nombres.get(t.proveedor_id)?.nombre ?? null,
-      id_producto: t.id_producto,
-      codigo_interno: t.codigo_interno,
-      descripcion: t.descripcion,
-      marca: t.marca,
-      modelo: t.modelo,
-      material: t.material,
-      precio_actual: t.precio_actual,
-    }));
+    results = top.map((t) => {
+      const row = ranked.find(r => r.proveedor_id === t.proveedor_id)!;
+      return {
+        rank: row.rank,
+        proveedor_id: t.proveedor_id,
+        proveedor_nombre: nombres.get(t.proveedor_id)?.nombre ?? null,
+        id_producto: t.id_producto,
+        codigo_interno: t.codigo_interno,
+        descripcion: t.descripcion,
+        marca: t.marca,
+        modelo: t.modelo,
+        material: t.material,
+        precio_actual: t.precio_actual,
+        total: row.total,
+      };
+    });
 
     /* ===================== NUEVO: LOG DE BÚSQUEDA ===================== */
-    // Nota: side-effect en GET; si preferís, podés moverlo a una Server Action con <form>.
     await prisma.productSearchLog.create({
       data: {
         user_email: userEmail || null,
@@ -251,7 +254,6 @@ export default async function LabQuotePage({
     });
 
     if (canAlert && providerCountForKey > 0) {
-      // Notificamos a TODOS los proveedores que cumplieron los filtros (no sólo el top)
       const proveedoresTodos = Array.from(byProveedor.values()).map(
         (p) => p.proveedor_id
       );
@@ -448,6 +450,12 @@ export default async function LabQuotePage({
                                   type="hidden"
                                   name="precio_actual"
                                   value={String(r.precio_actual)}
+                                />
+                                {/* 👇 NUEVO: pasar marca para el mail del ganador */}
+                                <input
+                                  type="hidden"
+                                  name="marca"
+                                  value={r.marca ?? ""}
                                 />
                                 <button
                                   type="submit"
