@@ -1,20 +1,42 @@
 // app/api/recommendations/latest/route.ts
 import { NextResponse, NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
 // Caché en memoria (simple pero efectivo)
 const cache = new Map<string, { data: any; timestamp: number; etag: string }>();
 const CACHE_TTL = 30000; // 30 segundos
 
 export async function GET(req: NextRequest) {
+  // ⛔️ Requiere usuario autenticado
+  const session = await getServerSession(authOptions);
+  const sessionUserId = (session?.user as any)?.id as string | undefined;
+  if (!sessionUserId) {
+    return new NextResponse("Unauthorized", {
+      status: 401,
+      headers: { "Cache-Control": "no-store, private", Vary: "Cookie" },
+    });
+  }
+
   const { searchParams } = new URL(req.url);
   const cliente_id = searchParams.get("cliente_id");
-  
+
   if (!cliente_id) {
-    return NextResponse.json(
+    const res = NextResponse.json(
       { ok: false, error: "cliente_id required" },
       { status: 400 }
     );
+    res.headers.set("Vary", "Cookie");
+    return res;
+  }
+
+  // 🔒 Anti-IDOR: el cliente_id del query debe ser el mismo de la sesión
+  if (cliente_id !== sessionUserId) {
+    return new NextResponse("Forbidden", {
+      status: 403,
+      headers: { "Cache-Control": "no-store, private", Vary: "Cookie" },
+    });
   }
 
   const cacheKey = `latest:${cliente_id}`;
@@ -26,19 +48,22 @@ export async function GET(req: NextRequest) {
     // Validación condicional con ETag
     const clientETag = req.headers.get("if-none-match");
     if (clientETag === cached.etag) {
-      return new NextResponse(null, { 
+      const res304 = new NextResponse(null, {
         status: 304,
         headers: {
-          'ETag': cached.etag,
-          'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
-        }
+          ETag: cached.etag,
+          "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+          Vary: "Cookie",
+        },
       });
+      return res304;
     }
 
     const res = NextResponse.json(cached.data);
-    res.headers.set('ETag', cached.etag);
-    res.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
-    res.headers.set('X-Cache', 'HIT');
+    res.headers.set("ETag", cached.etag);
+    res.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+    res.headers.set("X-Cache", "HIT");
+    res.headers.set("Vary", "Cookie");
     return res;
   }
 
@@ -47,31 +72,33 @@ export async function GET(req: NextRequest) {
     const batch = await prisma.recommendationBatch.findFirst({
       where: { cliente_id },
       orderBy: { createdAt: "desc" },
-      select: { 
-        id: true, 
-        createdAt: true, 
-        fecha_analisis: true, 
-        total: true 
+      select: {
+        id: true,
+        createdAt: true,
+        fecha_analisis: true,
+        total: true,
       },
     });
 
-    const payload = batch ? {
-      ok: true,
-      batchId: batch.id,
-      createdAt: batch.createdAt.toISOString(),
-      total: batch.total,
-      fecha_analisis: batch.fecha_analisis?.toISOString() ?? null,
-    } : { 
-      ok: true, 
-      batchId: null, 
-      createdAt: null, 
-      total: 0, 
-      fecha_analisis: null 
-    };
+    const payload = batch
+      ? {
+          ok: true,
+          batchId: batch.id,
+          createdAt: batch.createdAt.toISOString(),
+          total: batch.total,
+          fecha_analisis: batch.fecha_analisis?.toISOString() ?? null,
+        }
+      : {
+          ok: true,
+          batchId: null,
+          createdAt: null,
+          total: 0,
+          fecha_analisis: null,
+        };
 
     // Generar ETag único basado en contenido
-    const etag = batch 
-      ? `"${batch.id}.${batch.total}.${+batch.createdAt}"` 
+    const etag = batch
+      ? `"${batch.id}.${batch.total}.${+batch.createdAt}"`
       : `"empty.${now}"`;
 
     // 3. Actualizar caché en memoria
@@ -91,17 +118,18 @@ export async function GET(req: NextRequest) {
     }
 
     const res = NextResponse.json(payload);
-    res.headers.set('ETag', etag);
-    res.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
-    res.headers.set('X-Cache', 'MISS');
-    
+    res.headers.set("ETag", etag);
+    res.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+    res.headers.set("X-Cache", "MISS");
+    res.headers.set("Vary", "Cookie");
     return res;
-
   } catch (error) {
     console.error("[latest] Database error:", error);
-    return NextResponse.json(
+    const res = NextResponse.json(
       { ok: false, error: "Internal server error" },
       { status: 500 }
     );
+    res.headers.set("Vary", "Cookie");
+    return res;
   }
 }
